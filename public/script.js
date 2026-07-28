@@ -1450,7 +1450,7 @@ closeCreateRoomBtn.addEventListener('click', () => { createRoomModal.classList.a
 
 createRoomBtn.addEventListener('click', () => {
     const roomName = newRoomNameInput.value.trim();
-    const roomType = newRoomTypeSelect.value;
+    const roomType = newRoomTypeSelect ? newRoomTypeSelect.value : 'watch';
     if (roomName) {
         createRoomModal.classList.add('hidden');
         joinRoom(roomName, roomType);
@@ -1517,7 +1517,16 @@ async function joinRoom(roomName, roomType) {
         console.warn('Microphone permission skipped or failed:', e);
     }
 
-socket.emit('join_room', { username: myDisplayName || myUsername, room: currentRoom, room_type: roomType });
+    // --- YENİ EKLENEN KISIM ---
+    const activeUser = (typeof myDisplayName !== 'undefined' && myDisplayName) || 
+                       (typeof myUsername !== 'undefined' && myUsername) || 
+                       localStorage.getItem('username') || 'Anonim';
+
+    socket.emit('join_room', { 
+        username: activeUser, 
+        room: currentRoom, 
+        room_type: roomType 
+    });
 }
 
 leaveRoomBtn.addEventListener('click', leaveCurrentRoom);
