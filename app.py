@@ -522,7 +522,7 @@ def handle_join_room(data):
         join_room(room)
         user_sessions[request.sid] = {'room': room, 'username': username, 'muted': True}
         
-        # 1. Eğer oda henüz açılmadıysa odayı oluştur ve 'host_username' olarak kullanıcı adını kaydet
+        # 1. Eğer oda henüz açılmadıysa odayı oluştur
         if room not in active_rooms:
             active_rooms[room] = {
                 'count': 0,
@@ -533,12 +533,13 @@ def handle_join_room(data):
             }
             is_host = True
         else:
-            # 2. Eğer oda zaten varsa, giren kişi odayı kuran kişi mi diye KULLANICI ADINDAN kontrol et
-            is_host = (active_rooms[room].get('host_username') == username)
-            
-            # Eğer odayı kuran kişi tekrar bağlandıysa yeni socket id'sini güncelle
-            if is_host:
+            # 2. Oda zaten varsa: KULLANICI ADI kontrolü yap!
+            # Eğer oda kurucusu geri geldiyse, yeni socket.id'sini güncelle ve host yap!
+            if active_rooms[room].get('host_username') == username:
                 active_rooms[room]['host_sid'] = request.sid
+                is_host = True
+            else:
+                is_host = False
                 
             room_type = active_rooms[room]['type']
             
@@ -569,13 +570,15 @@ def handle_leave_room_event(data):
             active_rooms[room]['count'] -= 1
             if active_rooms[room]['count'] <= 0:
                 del active_rooms[room]
-            elif active_rooms[room]['host_sid'] == sid:
+           elif active_rooms[room]['host_sid'] == sid or active_rooms[room].get('host_username') == username:
                 remaining_sids = [s for s, u_info in user_sessions.items() if u_info['room'] == room and s != sid]
                 if remaining_sids:
                     new_host_sid = remaining_sids[0]
+                    new_host_username = user_sessions[new_host_sid]['username']
                     active_rooms[room]['host_sid'] = new_host_sid
+                    active_rooms[room]['host_username'] = new_host_username  # <-- İşte asıl sihir burada!
                     emit('room_info', {'is_host': True, 'type': active_rooms[room]['type']}, to=new_host_sid)
-                    emit('receive_message', {'username': 'Sistem', 'message': f"Oda sahibi ayrıldı. Yeni oda sorumlusu: {user_sessions[new_host_sid]['username']}", 'type': 'system'}, to=room)
+                    emit('receive_message', {'username': 'Sistem', 'message': f"Oda sahibi ayrıldı. Yeni oda sorumlusu: {new_host_username}", 'type': 'system'}, to=room)
         
         emit('user_left', {'sid': sid, 'username': username}, to=room)
         emit('receive_message', {'username': 'Sistem', 'message': f"{username} odadan ayrıldı.", 'type': 'system'}, to=room)
@@ -603,7 +606,8 @@ def handle_next_video(data):
     sid = request.sid
     if sid in user_sessions:
         room = user_sessions[sid]['room']
-        if room in active_rooms and active_rooms[room]['host_sid'] == sid:
+        username = user_sessions[sid]['username']
+        if room in active_rooms and active_rooms[room].get('host_username') == username:
             queue = active_rooms[room]['queue']
             if len(queue) > 0:
                 next_vid = queue.pop(0)
@@ -616,7 +620,8 @@ def handle_load_video(data):
     sid = request.sid
     if sid in user_sessions:
         room = user_sessions[sid]['room']
-        if room in active_rooms and active_rooms[room]['host_sid'] == sid:
+        username = user_sessions[sid]['username']
+        if room in active_rooms and active_rooms[room].get('host_username') == username:
             emit('load_video', {'videoUrl': data.get('videoUrl')}, to=room, include_self=False)
 
 @socketio.on('play_video')
@@ -624,7 +629,8 @@ def handle_play_video(data):
     sid = request.sid
     if sid in user_sessions:
         room = user_sessions[sid]['room']
-        if room in active_rooms and active_rooms[room]['host_sid'] == sid:
+        username = user_sessions[sid]['username']
+        if room in active_rooms and active_rooms[room].get('host_username') == username:
             emit('play_video', {'time': data.get('time')}, to=room, include_self=False)
 
 @socketio.on('pause_video')
@@ -632,7 +638,8 @@ def handle_pause_video(data):
     sid = request.sid
     if sid in user_sessions:
         room = user_sessions[sid]['room']
-        if room in active_rooms and active_rooms[room]['host_sid'] == sid:
+        username = user_sessions[sid]['username']
+        if room in active_rooms and active_rooms[room].get('host_username') == username:
             emit('pause_video', {'time': data.get('time')}, to=room, include_self=False)
 
 @socketio.on('seek_video')
@@ -640,7 +647,8 @@ def handle_seek_video(data):
     sid = request.sid
     if sid in user_sessions:
         room = user_sessions[sid]['room']
-        if room in active_rooms and active_rooms[room]['host_sid'] == sid:
+        username = user_sessions[sid]['username']
+        if room in active_rooms and active_rooms[room].get('host_username') == username:
             emit('seek_video', {'time': data.get('time')}, to=room, include_self=False)
 
 @socketio.on('mute_status')
