@@ -1516,7 +1516,8 @@ async function joinRoom(roomName, roomType) {
     } catch (e) {
         console.warn('Microphone permission skipped or failed:', e);
     }
-   socket.emit('join_room', { username: myDisplayName || myUsername, room: currentRoom, room_type: roomType });
+
+socket.emit('join_room', { username: myDisplayName || myUsername, room: currentRoom, room_type: roomType });
 }
 
 leaveRoomBtn.addEventListener('click', leaveCurrentRoom);
