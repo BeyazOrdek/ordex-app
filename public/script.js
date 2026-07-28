@@ -1511,13 +1511,7 @@ async function joinRoom(roomName, roomType) {
         else el.classList.remove('active-server');
     });
 
-    try {
-        await requestMicrophonePermission();
-    } catch (e) {
-        console.warn('Microphone permission skipped or failed:', e);
-    }
-
-    // --- YENİ EKLENEN KISIM ---
+    // 1. ÖNCE DİREKT ODAYA KATIL (Mikrofonu bekleme!)
     const activeUser = (typeof myDisplayName !== 'undefined' && myDisplayName) || 
                        (typeof myUsername !== 'undefined' && myUsername) || 
                        localStorage.getItem('username') || 'Anonim';
@@ -1526,6 +1520,11 @@ async function joinRoom(roomName, roomType) {
         username: activeUser, 
         room: currentRoom, 
         room_type: roomType 
+    });
+
+    // 2. MİKROFON İZNİNİ ARKA PLANDA İSTE (Odaya girişi engellemesin)
+    requestMicrophonePermission().catch(e => {
+        console.warn('Microphone permission skipped or failed:', e);
     });
 }
 
