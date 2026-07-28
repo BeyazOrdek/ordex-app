@@ -570,13 +570,13 @@ def handle_leave_room_event(data):
             active_rooms[room]['count'] -= 1
             if active_rooms[room]['count'] <= 0:
                 del active_rooms[room]
-           elif active_rooms[room]['host_sid'] == sid or active_rooms[room].get('host_username') == username:
+            elif active_rooms[room]['host_sid'] == sid or active_rooms[room].get('host_username') == username:
                 remaining_sids = [s for s, u_info in user_sessions.items() if u_info['room'] == room and s != sid]
                 if remaining_sids:
                     new_host_sid = remaining_sids[0]
                     new_host_username = user_sessions[new_host_sid]['username']
                     active_rooms[room]['host_sid'] = new_host_sid
-                    active_rooms[room]['host_username'] = new_host_username  # <-- İşte asıl sihir burada!
+                    active_rooms[room]['host_username'] = new_host_username
                     emit('room_info', {'is_host': True, 'type': active_rooms[room]['type']}, to=new_host_sid)
                     emit('receive_message', {'username': 'Sistem', 'message': f"Oda sahibi ayrıldı. Yeni oda sorumlusu: {new_host_username}", 'type': 'system'}, to=room)
         
