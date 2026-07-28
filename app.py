@@ -522,16 +522,24 @@ def handle_join_room(data):
         join_room(room)
         user_sessions[request.sid] = {'room': room, 'username': username, 'muted': True}
         
+        # 1. Eğer oda henüz açılmadıysa odayı oluştur ve 'host_username' olarak kullanıcı adını kaydet
         if room not in active_rooms:
             active_rooms[room] = {
                 'count': 0,
                 'host_sid': request.sid,
+                'host_username': username,  # Odayı kuran kişinin kullanıcı adı
                 'queue': [],
                 'type': room_type
             }
             is_host = True
         else:
-            is_host = (active_rooms[room]['host_sid'] == request.sid)
+            # 2. Eğer oda zaten varsa, giren kişi odayı kuran kişi mi diye KULLANICI ADINDAN kontrol et
+            is_host = (active_rooms[room].get('host_username') == username)
+            
+            # Eğer odayı kuran kişi tekrar bağlandıysa yeni socket id'sini güncelle
+            if is_host:
+                active_rooms[room]['host_sid'] = request.sid
+                
             room_type = active_rooms[room]['type']
             
         active_rooms[room]['count'] += 1
@@ -547,7 +555,7 @@ def handle_join_room(data):
         
         lobby_data = {name: {'count': info['count'], 'type': info.get('type', 'watch')} for name, info in active_rooms.items()}
         socketio.emit('room_list', lobby_data)
-
+        
 @socketio.on('leave_room_event')
 def handle_leave_room_event(data):
     sid = request.sid
