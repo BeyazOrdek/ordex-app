@@ -1,4 +1,9 @@
-const socket = io();
+const socket = io({
+    transports: ['websocket', 'polling'], // Bağlantıyı WebSocket'e zorlar
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000
+});
 
 // --- DOM ELEMANLARI ---
 const authView = document.getElementById('auth-view');
