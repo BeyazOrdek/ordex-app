@@ -502,7 +502,7 @@ async function startServer() {
     socket.on('send_message', (data) => { if (data.room) socket.to(data.room).emit('receive_message', { username: data.username, message: data.message, type: 'user' }); });
   });
 
-  // Vite middleware setup
+// Vite ve Statik Dosya Middleware Ayarları
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -517,10 +517,11 @@ async function startServer() {
     });
   }
 
-// YENİ KOD:
+  // Port ve Sunucuyu Başlatma
   const PORT = process.env.PORT || 3000;
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
+} // <-- async function startServer()'ın KAPATMA PARANTEZİ (Bunu kontrol et!)
 
 startServer();
