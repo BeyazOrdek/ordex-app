@@ -145,6 +145,7 @@
                     <div class="status-option" data-status="online"><span class="status-dot online"></span> Çevrimiçi</div>
                     <div class="status-option" data-status="idle"><span class="status-dot idle"></span> Boşta</div>
                     <div class="status-option" data-status="dnd"><span class="status-dot dnd"></span> Rahatsız Etmeyin</div>
+                    <div class="status-option" data-status="invisible"><span class="status-dot invisible"></span> Görünmez</div>
                 </div>
                 <div class="user-name-details" id="my-profile-name-trigger">
                     <span id="my-display-name" class="user-display-name">Kullanıcı</span>
@@ -330,6 +331,22 @@
                     <div id="screen-share-ui" class="video-wrapper cyberpunk-box hidden">
                         <div style="width: 100%; text-align: center; color: #666; margin-top: 20px;" id="no-screen-msg">
                             Şu an ekran paylaşan yok. Aşağıdaki butondan yayına başlayabilirsin. (Ekranlara tıklayarak büyütebilirsin!)
+                        </div>
+                    </div>
+
+                    <!-- MEDYA PLAYER KONTROL PANELİ (Play/Pause, Seek, Volume, Mute) -->
+                    <div id="media-player-controls" class="media-controls-panel cyberpunk-box">
+                        <button id="media-play-pause-btn" class="cyber-btn small media-play-btn" title="Oynat / Duraklat">▶</button>
+                        
+                        <div class="media-seek-wrap">
+                            <span id="media-time-current" class="media-time-text">00:00</span>
+                            <input type="range" id="media-seek-bar" class="media-seek-slider" min="0" max="100" value="0" step="0.1" title="Süre Sarma">
+                            <span id="media-time-total" class="media-time-text">00:00</span>
+                        </div>
+                        
+                        <div class="media-volume-wrap">
+                            <button id="media-mute-btn" class="icon-btn media-mute-btn" title="Sesi Kapa/Aç">🔊</button>
+                            <input type="range" id="media-volume-bar" class="media-volume-slider" min="0" max="100" value="100" title="Ses Seviyesi">
                         </div>
                     </div>
 
@@ -619,6 +636,24 @@
                     <input type="range" id="setting-mic-volume" min="0" max="100" value="100">
                 </div>
                 
+                <div class="modal-input-group" style="margin-top: 15px; background: rgba(0, 240, 255, 0.05); padding: 12px; border-radius: 8px; border: 1px solid rgba(0, 240, 255, 0.2);">
+                    <label style="font-weight: bold; color: var(--neon-cyan); margin-bottom: 10px; display: block;">⚡ WebRTC Gürültü Engelleme & Ses Filtreleri</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #eee; font-size: 0.9rem;">
+                            <input type="checkbox" id="setting-noise-suppression" checked style="width: 18px; height: 18px; accent-color: var(--neon-cyan);">
+                            🔘 Gürültü Azaltma (Noise Suppression)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #eee; font-size: 0.9rem;">
+                            <input type="checkbox" id="setting-echo-cancellation" checked style="width: 18px; height: 18px; accent-color: var(--neon-cyan);">
+                            🔘 Yankı Engelleme (Echo Cancellation)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #eee; font-size: 0.9rem;">
+                            <input type="checkbox" id="setting-auto-gain" checked style="width: 18px; height: 18px; accent-color: var(--neon-cyan);">
+                            🔘 Otomatik Ses Seviyesi Dengeleme (Auto Gain Control)
+                        </label>
+                    </div>
+                </div>
+
                 <div class="modal-input-group" style="margin-top: 15px;">
                     <label style="display: flex; align-items: center; gap: 8px;">
                         <input type="checkbox" id="setting-enable-sounds" checked style="width: 18px; height: 18px;">

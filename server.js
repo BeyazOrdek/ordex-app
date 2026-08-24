@@ -219,10 +219,11 @@ app.get('/api/friends/list', (req, res) => {
         avatarFrame: f_data.avatar_frame,
         profileBanner: f_data.profile_banner,
         customStatus: online_users[f_username] && online_users[f_username].custom_status !== undefined ? online_users[f_username].custom_status : f_data.custom_status,
+        userStatus: online_users[f_username] ? (online_users[f_username].status || 'online') : 'offline',
         badges: f_data.badges,
         isAdmin: f_data.is_admin,
         lastMessageTime: last_msg ? last_msg.timestamp : '1970-01-01T00:00:00Z',
-        isOnline: !!online_users[f_username]
+        isOnline: !!online_users[f_username] && online_users[f_username].status !== 'invisible'
       });
     }
   }
@@ -271,15 +272,18 @@ app.get('/api/groups/list', (req, res) => {
       const g_members = dbData.group_members.filter(gm => gm.group_id === gid);
       const members = g_members.map(gm => {
         const u = dbData.users.find(user => user.username === gm.username);
+        const isOnline = !!online_users[gm.username] && online_users[gm.username].status !== 'invisible';
+        const userStatus = online_users[gm.username] ? (online_users[gm.username].status || 'online') : 'offline';
         return {
           username: gm.username,
           displayName: u ? (u.display_name || u.username) : gm.username,
           avatar: u ? (u.avatar || '🎮') : '🎮',
           avatarFrame: u ? (u.avatar_frame || 'none') : 'none',
           customStatus: online_users[gm.username]?.custom_status || (u ? u.custom_status : ''),
+          userStatus: isOnline ? userStatus : 'offline',
           badges: u ? (u.badges || '🎮') : '🎮',
           isAdmin: u ? (u.is_admin || 0) : 0,
-          isOnline: !!online_users[gm.username]
+          isOnline
         };
       });
       
@@ -430,8 +434,12 @@ app.get('/api/gifs', async (req, res) => {
 // Socket.io
 io.on('connection', (socket) => {
   socket.on('register_user', (data) => {
-    const { username, display_name, avatar, avatar_frame, profile_banner, badges, is_admin } = data;
+    const { username, display_name, avatar, avatar_frame, profile_banner, badges, is_admin, status, custom_status } = data;
     if (username) {
+      const userInDb = dbData.users.find(u => u.username === username);
+      const userStatus = status || (online_users[username]?.status) || 'online';
+      const userCustomStatus = custom_status !== undefined ? custom_status : (userInDb?.custom_status || '');
+
       online_users[username] = {
         sid: socket.id,
         display_name: display_name || username,
@@ -439,13 +447,40 @@ io.on('connection', (socket) => {
         frame: avatar_frame || 'none',
         banner: profile_banner || 'linear-gradient(135deg, #00f0ff, #8a2be2)',
         badges: badges || '🎮',
-        is_admin: is_admin || 0
+        is_admin: is_admin || 0,
+        status: userStatus,
+        custom_status: userCustomStatus
       };
       io.emit('user_status_change', {
         username,
         display_name: online_users[username].display_name,
         avatar: online_users[username].avatar,
-        isOnline: true
+        status: userStatus,
+        custom_status: userCustomStatus,
+        isOnline: userStatus !== 'invisible'
+      });
+    }
+  });
+
+  socket.on('change_status', (data) => {
+    const { username, status, custom_status } = data;
+    if (username && online_users[username]) {
+      if (status) online_users[username].status = status;
+      if (custom_status !== undefined) {
+        online_users[username].custom_status = custom_status;
+        const uIdx = dbData.users.findIndex(u => u.username === username);
+        if (uIdx !== -1) {
+          dbData.users[uIdx].custom_status = custom_status;
+          saveDb();
+        }
+      }
+      io.emit('user_status_change', {
+        username,
+        display_name: online_users[username].display_name,
+        avatar: online_users[username].avatar,
+        status: online_users[username].status,
+        custom_status: online_users[username].custom_status,
+        isOnline: online_users[username].status !== 'invisible'
       });
     }
   });
@@ -524,30 +559,63 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('dm_call_request', (data) => {
-    const receiver = data.receiver;
-    if (online_users[receiver] && online_users[receiver].sid) {
+  const handleDmCallRequest = (data) => {
+    const receiver = data.receiver || data.target;
+    if (receiver && online_users[receiver] && online_users[receiver].sid) {
       io.to(online_users[receiver].sid).emit('dm_call_request', data);
+      io.to(online_users[receiver].sid).emit('dm-call-request', data);
     } else {
-      io.to(socket.id).emit('dm_call_error', { message: `'${receiver}' şu an çevrimdışı veya aramaya cevap veremiyor.` });
+      io.to(socket.id).emit('dm_call_error', { message: `'${receiver || 'Kullanıcı'}' şu an çevrimdışı veya aramaya cevap veremiyor.` });
     }
-  });
+  };
+  socket.on('dm_call_request', handleDmCallRequest);
+  socket.on('dm-call-user', handleDmCallRequest);
+  socket.on('dm-call-request', handleDmCallRequest);
 
-  socket.on('dm_call_response', (data) => {
-    if (online_users[data.receiver]) io.to(online_users[data.receiver].sid).emit('dm_call_response', data);
-  });
-  socket.on('dm_webrtc_offer', (data) => {
-    if (online_users[data.target]) io.to(online_users[data.target].sid).emit('dm_webrtc_offer', data);
-  });
-  socket.on('dm_webrtc_answer', (data) => {
-    if (online_users[data.target]) io.to(online_users[data.target].sid).emit('dm_webrtc_answer', data);
-  });
-  socket.on('dm_webrtc_ice_candidate', (data) => {
-    if (online_users[data.target]) io.to(online_users[data.target].sid).emit('dm_webrtc_ice_candidate', data);
-  });
-  socket.on('dm_call_end', (data) => {
-    if (online_users[data.target]) io.to(online_users[data.target].sid).emit('dm_call_end', data);
-  });
+  const handleDmCallResponse = (data) => {
+    const receiver = data.receiver || data.target;
+    if (receiver && online_users[receiver] && online_users[receiver].sid) {
+      io.to(online_users[receiver].sid).emit('dm_call_response', data);
+      io.to(online_users[receiver].sid).emit('dm-call-response', data);
+    }
+  };
+  socket.on('dm_call_response', handleDmCallResponse);
+  socket.on('dm-call-accepted', (data) => handleDmCallResponse({ ...data, accepted: true }));
+  socket.on('dm-call-rejected', (data) => handleDmCallResponse({ ...data, accepted: false }));
+
+  const handleDmWebRtcOffer = (data) => {
+    const target = data.target || data.receiver;
+    if (target && online_users[target] && online_users[target].sid) {
+      io.to(online_users[target].sid).emit('dm_webrtc_offer', data);
+    }
+  };
+  socket.on('dm_webrtc_offer', handleDmWebRtcOffer);
+
+  const handleDmWebRtcAnswer = (data) => {
+    const target = data.target || data.receiver;
+    if (target && online_users[target] && online_users[target].sid) {
+      io.to(online_users[target].sid).emit('dm_webrtc_answer', data);
+    }
+  };
+  socket.on('dm_webrtc_answer', handleDmWebRtcAnswer);
+
+  const handleDmIceCandidate = (data) => {
+    const target = data.target || data.receiver;
+    if (target && online_users[target] && online_users[target].sid) {
+      io.to(online_users[target].sid).emit('dm_webrtc_ice_candidate', data);
+    }
+  };
+  socket.on('dm_webrtc_ice_candidate', handleDmIceCandidate);
+
+  const handleDmCallEnd = (data) => {
+    const target = data ? (data.target || data.receiver) : null;
+    if (target && online_users[target] && online_users[target].sid) {
+      io.to(online_users[target].sid).emit('dm_call_end', data);
+      io.to(online_users[target].sid).emit('dm-call-ended', data);
+    }
+  };
+  socket.on('dm_call_end', handleDmCallEnd);
+  socket.on('dm-call-ended', handleDmCallEnd);
 
   socket.on('kick_room_user', (data) => {
     const target_sid = data.target_sid;
@@ -611,6 +679,20 @@ io.on('connection', (socket) => {
       socket.to(room).emit('user_joined', { username, sid: socket.id, muted: true, avatar });
       io.to(room).emit('receive_message', { username: 'Sistem', message: `${username} odaya katıldı.`, type: 'system' });
       
+      if (active_rooms[room].currentVideoUrl) {
+        let curTime = active_rooms[room].mediaState ? active_rooms[room].mediaState.time : 0;
+        let isPlaying = active_rooms[room].mediaState ? active_rooms[room].mediaState.isPlaying : false;
+        if (isPlaying && active_rooms[room].mediaState.updatedAt) {
+          curTime += (Date.now() - active_rooms[room].mediaState.updatedAt) / 1000;
+        }
+        io.to(socket.id).emit('sync_media_state', {
+          videoUrl: active_rooms[room].currentVideoUrl,
+          requested_by: active_rooms[room].currentRequestedBy,
+          isPlaying,
+          time: curTime
+        });
+      }
+
       const lobby_data = {};
       for (let name in active_rooms) {
         lobby_data[name] = { count: active_rooms[name].count, type: active_rooms[name].type || 'watch' };
@@ -675,12 +757,15 @@ io.on('connection', (socket) => {
   socket.on('next_video', () => {
     if (user_sessions[socket.id]) {
       const { room, username } = user_sessions[socket.id];
-      if (active_rooms[room] && active_rooms[room].host_username === username) {
+      if (active_rooms[room]) {
         if (active_rooms[room].queue.length > 0) {
           const next_vid = active_rooms[room].queue.shift();
+          active_rooms[room].currentVideoUrl = next_vid.url;
+          active_rooms[room].currentRequestedBy = next_vid.requested_by;
+          active_rooms[room].mediaState = { isPlaying: true, time: 0, updatedAt: Date.now() };
           io.to(room).emit('update_queue', { queue: active_rooms[room].queue });
           io.to(room).emit('load_video', { videoUrl: next_vid.url, requested_by: next_vid.requested_by });
-          io.to(room).emit('receive_message', { username: 'Sistem', message: `Oda sahibi sıradaki videoya geçti: ${next_vid.url}`, type: 'system' });
+          io.to(room).emit('receive_message', { username: 'Sistem', message: `Sıradaki videoya geçildi: ${next_vid.url}`, type: 'system' });
         }
       }
     }
@@ -689,8 +774,11 @@ io.on('connection', (socket) => {
   socket.on('load_video', (data) => {
     if (user_sessions[socket.id]) {
       const { room, username } = user_sessions[socket.id];
-      if (active_rooms[room] && active_rooms[room].host_username === username) {
-        socket.to(room).emit('load_video', { videoUrl: data.videoUrl, requested_by: username });
+      if (active_rooms[room]) {
+        active_rooms[room].currentVideoUrl = data.videoUrl;
+        active_rooms[room].currentRequestedBy = username;
+        active_rooms[room].mediaState = { isPlaying: true, time: 0, updatedAt: Date.now() };
+        io.to(room).emit('load_video', { videoUrl: data.videoUrl, requested_by: username });
       }
     }
   });
@@ -698,8 +786,13 @@ io.on('connection', (socket) => {
   socket.on('play_video', (data) => {
     if (user_sessions[socket.id]) {
       const { room, username } = user_sessions[socket.id];
-      if (active_rooms[room] && active_rooms[room].host_username === username) {
-        socket.to(room).emit('play_video', { time: data.time });
+      if (active_rooms[room]) {
+        active_rooms[room].mediaState = {
+          isPlaying: true,
+          time: typeof data.time === 'number' ? data.time : 0,
+          updatedAt: Date.now()
+        };
+        io.to(room).emit('play_video', { time: data.time || 0, sender: username });
       }
     }
   });
@@ -707,8 +800,13 @@ io.on('connection', (socket) => {
   socket.on('pause_video', (data) => {
     if (user_sessions[socket.id]) {
       const { room, username } = user_sessions[socket.id];
-      if (active_rooms[room] && active_rooms[room].host_username === username) {
-        socket.to(room).emit('pause_video', { time: data.time });
+      if (active_rooms[room]) {
+        active_rooms[room].mediaState = {
+          isPlaying: false,
+          time: typeof data.time === 'number' ? data.time : 0,
+          updatedAt: Date.now()
+        };
+        io.to(room).emit('pause_video', { time: data.time || 0, sender: username });
       }
     }
   });
@@ -716,8 +814,14 @@ io.on('connection', (socket) => {
   socket.on('seek_video', (data) => {
     if (user_sessions[socket.id]) {
       const { room, username } = user_sessions[socket.id];
-      if (active_rooms[room] && active_rooms[room].host_username === username) {
-        socket.to(room).emit('seek_video', { time: data.time });
+      if (active_rooms[room]) {
+        const isPlaying = active_rooms[room].mediaState ? active_rooms[room].mediaState.isPlaying : false;
+        active_rooms[room].mediaState = {
+          isPlaying,
+          time: typeof data.time === 'number' ? data.time : 0,
+          updatedAt: Date.now()
+        };
+        io.to(room).emit('seek_video', { time: data.time || 0, sender: username });
       }
     }
   });
@@ -741,7 +845,7 @@ io.on('connection', (socket) => {
       }
     }
     if (disconnectedUser) {
-      io.emit('user_status_change', { username: disconnectedUser, isOnline: false });
+      io.emit('user_status_change', { username: disconnectedUser, isOnline: false, status: 'offline' });
     }
     handleLeaveRoom();
   };

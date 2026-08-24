@@ -230,6 +230,11 @@ let ytApiReady = false;
 let isHost = false;
 let isScreenSharing = false;
 
+let myStatus = localStorage.getItem('ordex_user_status') || 'online';
+let isUserSeeking = false;
+let mediaVolume = 1;
+let isMediaMuted = false;
+
 let currentPmTarget = null;
 let currentChatType = 'dm';
 let currentGroupObj = null;
@@ -339,7 +344,9 @@ socket.on('connect', () => {
             avatar_frame: myAvatarFrame,
             profile_banner: myProfileBanner,
             badges: myBadges,
-            is_admin: myIsAdmin
+            is_admin: myIsAdmin,
+            status: myStatus,
+            custom_status: myCustomStatus
         });
         if (typeof currentRoom !== 'undefined' && currentRoom) {
             socket.emit('join_room', { 
@@ -506,11 +513,24 @@ function enterApp(userData) {
         avatar_frame: myAvatarFrame,
         profile_banner: myProfileBanner,
         badges: myBadges,
-        is_admin: myIsAdmin
+        is_admin: myIsAdmin,
+        status: myStatus,
+        custom_status: myCustomStatus
     });
     socket.emit('get_rooms');
     loadFriendsList();
     loadGroupsList();
+}
+
+const myStatusIndicator = document.getElementById('my-status-indicator');
+const statusSwitcherMenu = document.getElementById('status-switcher-menu');
+
+function updateMyStatusUI(status) {
+    myStatus = status;
+    localStorage.setItem('ordex_user_status', status);
+    if (myStatusIndicator) {
+        myStatusIndicator.className = `user-status-dot ${status}`;
+    }
 }
 
 function updateProfileUI() {
@@ -518,10 +538,34 @@ function updateProfileUI() {
     myAvatarDisplay.innerHTML = renderAvatar(myAvatar, myAvatarFrame);
     myDisplayNameEl.textContent = myDisplayName;
     myUsernameTagEl.textContent = '@' + myUsername;
+    if (myStatusIndicator) myStatusIndicator.className = `user-status-dot ${myStatus}`;
 }
 
-// KENDİ PROFİLİNE TIKLAYINCA DİREKT GÖRME HAKKI
-myProfileTrigger.addEventListener('click', openMyOwnProfileInSidebar);
+if (myProfileTrigger) {
+    myProfileTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (statusSwitcherMenu) statusSwitcherMenu.classList.toggle('hidden');
+    });
+}
+
+document.querySelectorAll('.status-option').forEach(opt => {
+    opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const status = opt.dataset.status;
+        if (status) {
+            updateMyStatusUI(status);
+            socket.emit('change_status', { username: myUsername, status, custom_status: myCustomStatus });
+            if (statusSwitcherMenu) statusSwitcherMenu.classList.add('hidden');
+        }
+    });
+});
+
+document.addEventListener('click', (e) => {
+    if (statusSwitcherMenu && !statusSwitcherMenu.classList.contains('hidden') && !e.target.closest('#status-switcher-menu')) {
+        statusSwitcherMenu.classList.add('hidden');
+    }
+});
+
 myProfileNameTrigger.addEventListener('click', openMyOwnProfileInSidebar);
 
 function openMyOwnProfileInSidebar() {
@@ -756,6 +800,75 @@ settingMicVolume.addEventListener('input', (e) => {
     document.getElementById('mic-vol-val').textContent = e.target.value;
     if (micGainNode) micGainNode.gain.value = e.target.value / 100;
 });
+
+// WEBRTC GÜRÜLTÜ ENGELLEME & SES FİLTRELERİ YÖNETİMİ
+function getAudioSettingsConstraints() {
+    const nsEl = document.getElementById('setting-noise-suppression');
+    const ecEl = document.getElementById('setting-echo-cancellation');
+    const agcEl = document.getElementById('setting-auto-gain');
+
+    let ns = true, ec = true, agc = true;
+    const saved = localStorage.getItem('ordex_audio_settings');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            ns = parsed.noiseSuppression !== false;
+            ec = parsed.echoCancellation !== false;
+            agc = parsed.autoGainControl !== false;
+        } catch(e) {}
+    }
+
+    if (nsEl) nsEl.checked = ns;
+    if (ecEl) ecEl.checked = ec;
+    if (agcEl) agcEl.checked = agc;
+
+    return { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc };
+}
+
+function saveAndApplyAudioSettings() {
+    const nsEl = document.getElementById('setting-noise-suppression');
+    const ecEl = document.getElementById('setting-echo-cancellation');
+    const agcEl = document.getElementById('setting-auto-gain');
+
+    const ns = nsEl ? nsEl.checked : true;
+    const ec = ecEl ? ecEl.checked : true;
+    const agc = agcEl ? agcEl.checked : true;
+
+    const settings = { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc };
+    localStorage.setItem('ordex_audio_settings', JSON.stringify(settings));
+
+    applyAudioConstraintsToActiveStreams();
+}
+
+async function applyAudioConstraintsToActiveStreams() {
+    const audioOpts = getAudioSettingsConstraints();
+    const applyToStream = async (stream) => {
+        if (stream && stream.getAudioTracks && stream.getAudioTracks().length > 0) {
+            const track = stream.getAudioTracks()[0];
+            if (track && typeof track.applyConstraints === 'function') {
+                try {
+                    await track.applyConstraints({
+                        noiseSuppression: audioOpts.noiseSuppression,
+                        echoCancellation: audioOpts.echoCancellation,
+                        autoGainControl: audioOpts.autoGainControl
+                    });
+                } catch (err) {
+                    console.warn('Track applyConstraints warning:', err);
+                }
+            }
+        }
+    };
+    await applyToStream(localAudioStream);
+    await applyToStream(localDmStream);
+}
+
+setTimeout(() => {
+    getAudioSettingsConstraints();
+    ['setting-noise-suppression', 'setting-echo-cancellation', 'setting-auto-gain'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', saveAndApplyAudioSettings);
+    });
+}, 500);
 
 // --- ARKADAŞLIK, DİREKT MESAJ VE GRUP SEKMELERİ ---
 tabFriendsAll.addEventListener('click', () => setFriendsFilter('all'));
@@ -1342,7 +1455,7 @@ async function startDmCall(type) {
 
     try {
         localDmStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: getAudioSettingsConstraints(),
             video: type === 'video'
         });
         if (type === 'video') {
@@ -1397,7 +1510,7 @@ if (acceptCallBtn) acceptCallBtn.addEventListener('click', async () => {
 
     try {
         localDmStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: getAudioSettingsConstraints(),
             video: dmCallType === 'video'
         });
         if (dmCallType === 'video') {
@@ -1646,9 +1759,11 @@ leaveRoomBtn.addEventListener('click', leaveCurrentRoom);
 
 function leaveCurrentRoom() {
     if (currentRoom) {
-        // Cleanup Audio/Video
-        if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-            try { ytPlayer.stopVideo(); } catch(e){}
+        // Cleanup Audio/Video and YouTube player
+        if (typeof ytPlayer !== 'undefined' && ytPlayer) {
+            if (typeof ytPlayer.stopVideo === 'function') { try { ytPlayer.stopVideo(); } catch(e){} }
+            if (typeof ytPlayer.destroy === 'function') { try { ytPlayer.destroy(); } catch(e){} }
+            ytPlayer = null;
         }
         if (typeof stopMusicProgress === 'function') stopMusicProgress();
         
@@ -1668,6 +1783,7 @@ function leaveCurrentRoom() {
         });
 
         socket.emit('leave_room_event', {});
+        socket.emit('leave-room', { room: currentRoom });
         currentRoom = '';
         Object.keys(peers).forEach(sid => {
             if (peers[sid]) peers[sid].close();
@@ -1689,6 +1805,16 @@ function leaveCurrentRoom() {
         dmChatContainer.classList.add('hidden');
     }
 }
+
+window.addEventListener('beforeunload', () => {
+    leaveCurrentRoom();
+    endDmCall();
+});
+
+window.addEventListener('pagehide', () => {
+    leaveCurrentRoom();
+    endDmCall();
+});
 
 function setupRoomUI(type) {
     currentRoomType = type;
@@ -1791,7 +1917,7 @@ nextVideoBtn.addEventListener('click', () => {
 async function requestMicrophonePermission() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try {
-        localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioSettingsConstraints() });
         localAudioStream.getAudioTracks()[0].enabled = false;
         socket.emit('mute_status', { muted: true });
 
@@ -2103,14 +2229,50 @@ function stopMusicProgress() {
     }
 }
 
-// --- YOUTUBE & VIDEO OYNATICI ---
+// --- YOUTUBE & VİDEO OYNATICI ---
 function extractYouTubeId(url) {
-    if (url.includes('youtube.com') || url.includes('youtu.be')) {
-        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-        const match = url.match(regExp);
-        return (match && match[2].length === 11) ? match[2] : null;
+    if (!url) return null;
+    const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|watch|shorts)\/|.*[?&]v=)|music\.youtube\.com\/watch\?v=|youtu\.be\/)([^"&?\/\s]{11})/;
+    const match = url.match(regExp);
+    return match ? match[1] : null;
+}
+
+function createOrReplaceYtPlayer(containerId, ytId, embedUrl) {
+    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+        try { ytPlayer.destroy(); } catch(e) {}
+        ytPlayer = null;
     }
-    return null;
+    try {
+        ytPlayer = new YT.Player(containerId, {
+            height: '100%',
+            width: '100%',
+            videoId: ytId,
+            playerVars: {
+                'autoplay': 1,
+                'controls': (currentRoomType === 'music') ? 0 : 1,
+                'rel': 0,
+                'enablejsapi': 1,
+                'origin': window.location.origin
+            },
+            events: {
+                'onReady': (evt) => {
+                    try {
+                        const iframe = evt.target.getIframe();
+                        if (iframe) {
+                            iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen');
+                        }
+                    } catch(e) {}
+                    try { evt.target.playVideo(); } catch(e) {}
+                },
+                'onStateChange': onYoutubePlayerStateChange
+            }
+        });
+    } catch(e) {
+        const containerElem = document.getElementById(containerId);
+        if (containerElem) {
+            containerElem.innerHTML = `<iframe id="${containerId}-iframe" src="${embedUrl}" style="width:100%; height:100%; min-height:360px; border:0;" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen></iframe>`;
+        }
+    }
 }
 
 function handleVideoLoading(url, requestedBy = myUsername) {
@@ -2123,38 +2285,42 @@ function handleVideoLoading(url, requestedBy = myUsername) {
     }
     if (ytId) {
         isYoutubeMode = true;
-        videoPlayer.style.display = 'none';
-        videoPlayer.pause();
-        youtubeContainer.style.display = 'block';
+        if (videoPlayer) {
+            videoPlayer.style.display = 'none';
+            videoPlayer.pause();
+        }
+        if (youtubeContainer) youtubeContainer.style.display = 'block';
+
+        const targetContainerId = (currentRoomType === 'music') ? 'music-yt-player' : 'yt-player';
+        const embedUrl = `https://www.youtube.com/embed/${ytId}?enablejsapi=1&autoplay=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`;
 
         if (currentRoomType === 'music') {
-            document.getElementById('music-title').textContent = 'Müzik Yükleniyor...';
-            if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+            const titleEl = document.getElementById('music-title');
+            if (titleEl) titleEl.textContent = 'Müzik Yükleniyor...';
+        }
+
+        if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+            try {
                 ytPlayer.loadVideoById(ytId);
-            } else if (ytApiReady) {
-                ytPlayer = new YT.Player('music-yt-player', {
-                    height: '100%', width: '100%', videoId: ytId,
-                    playerVars: { 'autoplay': 1, 'controls': 0, 'rel': 0 },
-                    events: { 'onStateChange': onYoutubePlayerStateChange }
-                });
+            } catch(e) {
+                createOrReplaceYtPlayer(targetContainerId, ytId, embedUrl);
             }
+        } else if (window.YT && window.YT.Player && ytApiReady) {
+            createOrReplaceYtPlayer(targetContainerId, ytId, embedUrl);
         } else {
-            if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
-                ytPlayer.loadVideoById(ytId);
-            } else if (ytApiReady) {
-                ytPlayer = new YT.Player('yt-player', {
-                    height: '100%', width: '100%', videoId: ytId,
-                    playerVars: { 'autoplay': 1, 'controls': isHost ? 1 : 0, 'rel': 0 },
-                    events: { 'onStateChange': onYoutubePlayerStateChange }
-                });
+            const containerElem = document.getElementById(targetContainerId);
+            if (containerElem) {
+                containerElem.innerHTML = `<iframe id="${targetContainerId}-iframe" src="${embedUrl}" style="width:100%; height:100%; min-height:360px; border:0;" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen></iframe>`;
             }
         }
     } else {
         isYoutubeMode = false;
-        youtubeContainer.style.display = 'none';
-        videoPlayer.style.display = 'block';
-        videoPlayer.src = url;
-        videoPlayer.load();
+        if (youtubeContainer) youtubeContainer.style.display = 'none';
+        if (videoPlayer) {
+            videoPlayer.style.display = 'block';
+            videoPlayer.src = url;
+            videoPlayer.load();
+        }
     }
 }
 
@@ -2190,47 +2356,202 @@ function onYoutubePlayerStateChange(event) {
         }
     }
 
-    if (isSyncing || !isYoutubeMode || !isHost) return;
+    if (isSyncing || !isYoutubeMode) return;
     const currentTime = ytPlayer.getCurrentTime();
-    if (event.data === YT.PlayerState.PLAYING) socket.emit('play_video', { room: currentRoom, time: currentTime });
-    else if (event.data === YT.PlayerState.PAUSED) socket.emit('pause_video', { room: currentRoom, time: currentTime });
+    if (event.data === YT.PlayerState.PLAYING) {
+        updateMediaUIPlayState(true);
+        socket.emit('play_video', { room: currentRoom, time: currentTime });
+    } else if (event.data === YT.PlayerState.PAUSED) {
+        updateMediaUIPlayState(false);
+        socket.emit('pause_video', { room: currentRoom, time: currentTime });
+    }
 }
+
+// --- MEDYA KONTROL VE SENKRONİZASYON (Play / Pause, Seek, Volume, Mute) ---
+const mediaPlayPauseBtn = document.getElementById('media-play-pause-btn');
+const mediaSeekBar = document.getElementById('media-seek-bar');
+const mediaTimeCurrent = document.getElementById('media-time-current');
+const mediaTimeTotal = document.getElementById('media-time-total');
+const mediaVolumeBar = document.getElementById('media-volume-bar');
+const mediaMuteBtn = document.getElementById('media-mute-btn');
+
+function getMediaCurrentTime() {
+    if (isYoutubeMode && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        return ytPlayer.getCurrentTime() || 0;
+    } else if (videoPlayer) {
+        return videoPlayer.currentTime || 0;
+    }
+    return 0;
+}
+
+function getMediaDuration() {
+    if (isYoutubeMode && ytPlayer && typeof ytPlayer.getDuration === 'function') {
+        return ytPlayer.getDuration() || 0;
+    } else if (videoPlayer) {
+        return videoPlayer.duration || 0;
+    }
+    return 0;
+}
+
+function updateMediaUIPlayState(isPlaying) {
+    if (mediaPlayPauseBtn) mediaPlayPauseBtn.textContent = isPlaying ? '⏸' : '▶';
+    const disc = document.getElementById('music-disc-elem');
+    if (disc) {
+        if (isPlaying) disc.classList.remove('paused');
+        else disc.classList.add('paused');
+    }
+}
+
+function playMediaLocal() {
+    updateMediaUIPlayState(true);
+    if (isYoutubeMode && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        ytPlayer.playVideo();
+    } else if (videoPlayer) {
+        videoPlayer.play().catch(() => {});
+    }
+}
+
+function pauseMediaLocal() {
+    updateMediaUIPlayState(false);
+    if (isYoutubeMode && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+        ytPlayer.pauseVideo();
+    } else if (videoPlayer) {
+        videoPlayer.pause();
+    }
+}
+
+function seekMediaLocal(targetTime) {
+    if (isYoutubeMode && ytPlayer && typeof ytPlayer.seekTo === 'function') {
+        ytPlayer.seekTo(targetTime, true);
+    } else if (videoPlayer) {
+        videoPlayer.currentTime = targetTime;
+    }
+}
+
+if (mediaPlayPauseBtn) {
+    mediaPlayPauseBtn.addEventListener('click', () => {
+        const isPlayingNow = mediaPlayPauseBtn.textContent === '⏸';
+        const curTime = getMediaCurrentTime();
+        if (isPlayingNow) {
+            pauseMediaLocal();
+            socket.emit('pause_video', { room: currentRoom, time: curTime });
+        } else {
+            playMediaLocal();
+            socket.emit('play_video', { room: currentRoom, time: curTime });
+        }
+    });
+}
+
+if (mediaSeekBar) {
+    mediaSeekBar.addEventListener('mousedown', () => { isUserSeeking = true; });
+    mediaSeekBar.addEventListener('touchstart', () => { isUserSeeking = true; });
+
+    const handleSeekChange = () => {
+        isUserSeeking = false;
+        const dur = getMediaDuration();
+        if (dur > 0) {
+            const targetTime = (parseFloat(mediaSeekBar.value) / 100) * dur;
+            seekMediaLocal(targetTime);
+            socket.emit('seek_video', { room: currentRoom, time: targetTime });
+        }
+    };
+
+    mediaSeekBar.addEventListener('change', handleSeekChange);
+}
+
+if (mediaVolumeBar) {
+    mediaVolumeBar.addEventListener('input', () => {
+        const val = parseFloat(mediaVolumeBar.value) / 100;
+        mediaVolume = val;
+        if (isYoutubeMode && ytPlayer && typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(val * 100);
+        }
+        if (videoPlayer) videoPlayer.volume = val;
+        if (mediaMuteBtn) mediaMuteBtn.textContent = val === 0 ? '🔇' : '🔊';
+    });
+}
+
+if (mediaMuteBtn) {
+    mediaMuteBtn.addEventListener('click', () => {
+        isMediaMuted = !isMediaMuted;
+        if (isYoutubeMode && ytPlayer) {
+            if (isMediaMuted && typeof ytPlayer.mute === 'function') ytPlayer.mute();
+            else if (typeof ytPlayer.unMute === 'function') ytPlayer.unMute();
+        }
+        if (videoPlayer) videoPlayer.muted = isMediaMuted;
+        mediaMuteBtn.textContent = isMediaMuted ? '🔇' : (mediaVolume === 0 ? '🔇' : '🔊');
+    });
+}
+
+setInterval(() => {
+    const cur = getMediaCurrentTime();
+    const dur = getMediaDuration();
+
+    const currM = Math.floor(cur / 60).toString().padStart(2, '0');
+    const currS = Math.floor(cur % 60).toString().padStart(2, '0');
+    const durM = Math.floor(dur / 60).toString().padStart(2, '0');
+    const durS = Math.floor(dur % 60).toString().padStart(2, '0');
+
+    const timeStr = `${currM}:${currS}`;
+    const durStr = `${durM}:${durS}`;
+
+    if (mediaTimeCurrent) mediaTimeCurrent.textContent = timeStr;
+    if (mediaTimeTotal) mediaTimeTotal.textContent = durStr;
+
+    const mCur = document.getElementById('music-time-current');
+    const mTot = document.getElementById('music-time-total');
+    const mProg = document.getElementById('music-progress-bar');
+    if (mCur) mCur.textContent = timeStr;
+    if (mTot) mTot.textContent = durStr;
+    if (mProg && dur > 0) mProg.style.width = ((cur / dur) * 100) + '%';
+
+    if (mediaSeekBar && !isUserSeeking && dur > 0) {
+        mediaSeekBar.value = (cur / dur) * 100;
+    }
+}, 400);
 
 socket.on('load_video', (data) => handleVideoLoading(data.videoUrl, data.requested_by));
 
-videoPlayer.addEventListener('play', () => { if (!isSyncing && !isYoutubeMode && isHost) socket.emit('play_video', { room: currentRoom, time: videoPlayer.currentTime }); });
-videoPlayer.addEventListener('pause', () => { if (!isSyncing && !isYoutubeMode && isHost) socket.emit('pause_video', { room: currentRoom, time: videoPlayer.currentTime }); });
-videoPlayer.addEventListener('seeked', () => { if (!isSyncing && !isYoutubeMode && isHost) socket.emit('seek_video', { room: currentRoom, time: videoPlayer.currentTime }); });
+videoPlayer.addEventListener('play', () => {
+    updateMediaUIPlayState(true);
+    if (!isSyncing && !isYoutubeMode) socket.emit('play_video', { room: currentRoom, time: videoPlayer.currentTime });
+});
+videoPlayer.addEventListener('pause', () => {
+    updateMediaUIPlayState(false);
+    if (!isSyncing && !isYoutubeMode) socket.emit('pause_video', { room: currentRoom, time: videoPlayer.currentTime });
+});
+videoPlayer.addEventListener('seeked', () => {
+    if (!isSyncing && !isYoutubeMode) socket.emit('seek_video', { room: currentRoom, time: videoPlayer.currentTime });
+});
 
 socket.on('play_video', (data) => {
     isSyncing = true;
-    if (isYoutubeMode && ytPlayer && typeof ytPlayer.playVideo === 'function') {
-        if (Math.abs(ytPlayer.getCurrentTime() - data.time) > 1.5) ytPlayer.seekTo(data.time, true);
-        ytPlayer.playVideo();
-    } else if (!isYoutubeMode) {
-        if (Math.abs(videoPlayer.currentTime - data.time) > 1.5) videoPlayer.currentTime = data.time;
-        videoPlayer.play().catch(() => {});
-    }
+    if (Math.abs(getMediaCurrentTime() - data.time) > 1.5) seekMediaLocal(data.time);
+    playMediaLocal();
     setTimeout(() => { isSyncing = false; }, 600);
 });
 
 socket.on('pause_video', (data) => {
     isSyncing = true;
-    if (isYoutubeMode && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-        ytPlayer.pauseVideo();
-        if (Math.abs(ytPlayer.getCurrentTime() - data.time) > 1.5) ytPlayer.seekTo(data.time, true);
-    } else if (!isYoutubeMode) {
-        videoPlayer.pause();
-        if (Math.abs(videoPlayer.currentTime - data.time) > 1.5) videoPlayer.currentTime = data.time;
-    }
+    pauseMediaLocal();
+    if (Math.abs(getMediaCurrentTime() - data.time) > 1.5) seekMediaLocal(data.time);
     setTimeout(() => { isSyncing = false; }, 600);
 });
 
 socket.on('seek_video', (data) => {
-    if (isYoutubeMode) return;
     isSyncing = true;
-    videoPlayer.currentTime = data.time;
+    seekMediaLocal(data.time);
     setTimeout(() => { isSyncing = false; }, 600);
+});
+
+socket.on('sync_media_state', (data) => {
+    if (data.videoUrl) {
+        handleVideoLoading(data.videoUrl, data.requested_by);
+        isSyncing = true;
+        seekMediaLocal(data.time || 0);
+        if (data.isPlaying) playMediaLocal(); else pauseMediaLocal();
+        setTimeout(() => { isSyncing = false; }, 800);
+    }
 });
 
 // --- CHAT ALANI ---
