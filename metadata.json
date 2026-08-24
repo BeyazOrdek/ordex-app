@@ -1,0 +1,6 @@
+{
+  "name": "Siberpunk Discord",
+  "description": "A cyberpunk themed real-time chat and calling app",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

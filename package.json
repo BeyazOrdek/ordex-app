@@ -1,0 +1,17 @@
+{
+  "name": "ordex-platform",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'No build step needed'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsdom": "^30.0.1",
+    "socket.io": "^4.8.1"
+  }
+}
