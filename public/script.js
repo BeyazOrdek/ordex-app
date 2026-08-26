@@ -277,19 +277,21 @@ let dmCallType = 'voice';
 let incomingCallData = null;
 let isInCall = false;
 
-// Oda WebRTC
+// Oda WebRTC & Mesh Voice Management
 let localAudioStream = null;
 let localScreenStream = null;
 const peers = {};
+const pendingCandidates = {};
+const pendingAudioElements = new Set();
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
     ]
 };
 let audioContext;
 let micGainNode;
-const pendingAudioPlays = [];
 
 // Bildirim Sesleri
 const notifAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1514,16 +1516,25 @@ socket.on('update_queue', (data) => {
 async function requestMicrophonePermission() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try {
-        localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioSettingsConstraints() });
-        localAudioStream.getAudioTracks()[0].enabled = false;
-        socket.emit('mute_status', { muted: true });
+        localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioSettingsConstraints(), video: false });
+        
+        const isCurrentlyMuted = micToggleBtn ? micToggleBtn.textContent.includes('Aç') : false;
+        localAudioStream.getAudioTracks().forEach(t => t.enabled = !isCurrentlyMuted);
+        socket.emit('mute_status', { muted: isCurrentlyMuted });
 
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().catch(() => {});
+        }
+
         const source = audioContext.createMediaStreamSource(localAudioStream);
         micGainNode = audioContext.createGain();
         source.connect(micGainNode);
 
         monitorAudio(localAudioStream, socket.id);
+
         Object.values(peers).forEach(pc => {
             localAudioStream.getTracks().forEach(track => {
                 const senders = pc.getSenders();
@@ -1533,7 +1544,8 @@ async function requestMicrophonePermission() {
             });
         });
     } catch (e) {
-        addMessageToChat('Sistem', 'Sesli konuşma için mikrofon erişimi reddedildi.', 'system');
+        console.error('Mikrofon erişim hatası:', e);
+        addMessageToChat('Sistem', 'Sesli konuşma için mikrofon erişimi reddedildi veya cihaz bulunamadı.', 'system');
     }
 }
 
@@ -1616,16 +1628,127 @@ socket.on('kicked_from_room', () => {
     leaveCurrentRoom();
 });
 
+function playRemoteAudioTrack(stream, targetSid) {
+    let audioEl = document.getElementById('audio-' + targetSid);
+    if (!audioEl) {
+        audioEl = document.createElement('audio');
+        audioEl.id = 'audio-' + targetSid;
+        audioEl.autoplay = true;
+        audioEl.playsInline = true;
+        document.body.appendChild(audioEl);
+    }
+    audioEl.srcObject = stream;
+    audioEl.play().catch(err => {
+        console.log("Autoplay engellendi, kullanıcı etkileşimi bekleniyor:", err);
+        pendingAudioElements.add(audioEl);
+    });
+}
+
+async function flushPendingCandidates(targetSid) {
+    const pc = peers[targetSid];
+    if (!pc || !pc.remoteDescription) return;
+    if (pendingCandidates[targetSid] && pendingCandidates[targetSid].length > 0) {
+        const candidates = [...pendingCandidates[targetSid]];
+        pendingCandidates[targetSid] = [];
+        for (const candidate of candidates) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+                console.error('Pending ICE candidate ekleme hatası:', err);
+            }
+        }
+    }
+}
+
+function createPeerConnection(targetSid, isInitiator = false) {
+    if (peers[targetSid]) {
+        try { peers[targetSid].close(); } catch(e) {}
+        delete peers[targetSid];
+    }
+
+    const pc = new RTCPeerConnection(rtcConfig);
+    peers[targetSid] = pc;
+    pendingCandidates[targetSid] = [];
+
+    if (localAudioStream) {
+        localAudioStream.getTracks().forEach(track => {
+            pc.addTrack(track, localAudioStream);
+        });
+    }
+    if (localScreenStream) {
+        localScreenStream.getTracks().forEach(track => {
+            pc.addTrack(track, localScreenStream);
+        });
+    }
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('webrtc_ice_candidate', {
+                target_sid: targetSid,
+                sender_sid: socket.id,
+                candidate: event.candidate
+            });
+        }
+    };
+
+    pc.ontrack = (event) => {
+        if (event.track.kind === 'video') {
+            renderScreenShare(targetSid, 'Yayın', event.streams[0]);
+        } else if (event.track.kind === 'audio') {
+            playRemoteAudioTrack(event.streams[0], targetSid);
+            monitorAudio(event.streams[0], targetSid);
+        }
+    };
+
+    if (isInitiator) {
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .then(() => {
+                socket.emit('webrtc_offer', {
+                    target_sid: targetSid,
+                    sender_sid: socket.id,
+                    offer: pc.localDescription
+                });
+            })
+            .catch(err => console.error('WebRTC Offer oluşturma hatası:', err));
+    }
+
+    return pc;
+}
+
 socket.on('room_users_list', (users) => {
     voiceUsersList.innerHTML = '';
-    users.forEach(u => renderVoiceUser(u.sid, u.username, u.muted, u.avatar));
+    users.forEach(u => {
+        renderVoiceUser(u.sid, u.username, u.muted, u.avatar);
+        if (u.sid !== socket.id) {
+            createPeerConnection(u.sid, true);
+        }
+    });
 });
-socket.on('user_joined', (data) => renderVoiceUser(data.sid, data.username, data.muted, data.avatar));
+
+socket.on('user_joined', (data) => {
+    renderVoiceUser(data.sid, data.username, data.muted, data.avatar);
+});
+
 socket.on('user_left', (data) => {
+    if (peers[data.sid]) {
+        try { peers[data.sid].close(); } catch(e) {}
+        delete peers[data.sid];
+    }
+    delete pendingCandidates[data.sid];
+
+    const audioEl = document.getElementById('audio-' + data.sid);
+    if (audioEl) {
+        try { audioEl.pause(); audioEl.src = ''; } catch(e) {}
+        audioEl.remove();
+        pendingAudioElements.delete(audioEl);
+    }
+
     const div = document.getElementById('voice-user-' + data.sid);
     if (div) div.remove();
     removeScreenShare(data.sid);
 });
+
 socket.on('user_mute_status', (data) => {
     const div = document.getElementById('voice-user-' + data.sid);
     if (div) {
@@ -1634,52 +1757,50 @@ socket.on('user_mute_status', (data) => {
     }
 });
 
-function createPeerConnection(targetSid) {
-    const pc = new RTCPeerConnection(rtcConfig);
-    peers[targetSid] = pc;
-    pc.addTransceiver('audio', { direction: 'recvonly' });
-    if (localAudioStream) localAudioStream.getTracks().forEach(track => pc.addTrack(track, localAudioStream));
-    if (localScreenStream) localScreenStream.getTracks().forEach(track => pc.addTrack(track, localScreenStream));
-    
-    pc.onnegotiationneeded = async () => {
-        try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('webrtc_offer', { target_sid: targetSid, sender_sid: socket.id, offer: pc.localDescription });
-        } catch (err) { console.error(err); }
-    };
-    pc.onicecandidate = (event) => {
-        if (event.candidate) socket.emit('webrtc_ice_candidate', { target_sid: targetSid, sender_sid: socket.id, candidate: event.candidate });
-    };
-    pc.ontrack = (event) => {
-        if (event.track.kind === 'video') {
-            renderScreenShare(targetSid, 'Yayın', event.streams[0]);
-        } else if (event.track.kind === 'audio') {
-            let audioEl = document.getElementById('audio-' + targetSid);
-            if (!audioEl) {
-                audioEl = document.createElement('audio');
-                audioEl.id = 'audio-' + targetSid;
-                audioEl.autoplay = true;
-                document.body.appendChild(audioEl);
-            }
-            audioEl.srcObject = event.streams[0];
-            audioEl.play().catch(() => pendingAudioPlays.push(audioEl));
-            monitorAudio(event.streams[0], targetSid);
-        }
-    };
-    return pc;
-}
-
 socket.on('webrtc_offer', async (data) => {
-    let pc = peers[data.sender_sid];
-    if (!pc) pc = createPeerConnection(data.sender_sid);
-    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('webrtc_answer', { target_sid: data.sender_sid, sender_sid: socket.id, answer: answer });
+    try {
+        const pc = createPeerConnection(data.sender_sid, false);
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await flushPendingCandidates(data.sender_sid);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('webrtc_answer', {
+            target_sid: data.sender_sid,
+            sender_sid: socket.id,
+            answer: answer
+        });
+    } catch (err) {
+        console.error('webrtc_offer alma hatası:', err);
+    }
 });
-socket.on('webrtc_answer', async (data) => { if (peers[data.sender_sid]) await peers[data.sender_sid].setRemoteDescription(new RTCSessionDescription(data.answer)); });
-socket.on('webrtc_ice_candidate', async (data) => { if (peers[data.sender_sid]) await peers[data.sender_sid].addIceCandidate(new RTCIceCandidate(data.candidate)); });
+
+socket.on('webrtc_answer', async (data) => {
+    try {
+        const pc = peers[data.sender_sid];
+        if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            await flushPendingCandidates(data.sender_sid);
+        }
+    } catch (err) {
+        console.error('webrtc_answer alma hatası:', err);
+    }
+});
+
+socket.on('webrtc_ice_candidate', async (data) => {
+    try {
+        const pc = peers[data.sender_sid];
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } else {
+            if (!pendingCandidates[data.sender_sid]) {
+                pendingCandidates[data.sender_sid] = [];
+            }
+            pendingCandidates[data.sender_sid].push(data.candidate);
+        }
+    } catch (err) {
+        console.error('ICE candidate alma hatası:', err);
+    }
+});
 
 // Ekran Paylaşımı
 if (shareScreenBtn) {
@@ -2742,8 +2863,15 @@ document.addEventListener('mouseup', () => {
     }
 });
 
-document.addEventListener('click', () => {
-    if (notifAudioCtx && notifAudioCtx.state === 'suspended') notifAudioCtx.resume();
-    if (audioContext && audioContext.state === 'suspended') audioContext.resume();
-    while (pendingAudioPlays.length > 0) { pendingAudioPlays.shift().play().catch(() => {}); }
-});
+function unlockAudioAutoplay() {
+    if (notifAudioCtx && notifAudioCtx.state === 'suspended') notifAudioCtx.resume().catch(() => {});
+    if (audioContext && audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+    pendingAudioElements.forEach(audioEl => {
+        audioEl.play().then(() => {
+            pendingAudioElements.delete(audioEl);
+        }).catch(() => {});
+    });
+}
+document.addEventListener('click', unlockAudioAutoplay);
+document.addEventListener('keydown', unlockAudioAutoplay);
+document.addEventListener('touchstart', unlockAudioAutoplay);
