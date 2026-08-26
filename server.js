@@ -221,7 +221,37 @@ app.post('/api/admin/assign_badge', async (req, res) => {
   }
 });
 
-// ================= ARKADAŞLIK & KULLANICI ARAMA APILERI =================
+app.post('/api/profile/update', async (req, res) => {
+  const { username, display_name, avatar, about, avatar_frame, profile_banner, custom_status } = req.body;
+  if (!username) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+
+  let user = dbData.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+  if (!user) {
+    user = {
+      id: Date.now(),
+      username: username,
+      password: '',
+      display_name: display_name ? display_name.trim() : username,
+      avatar: avatar || '🎮',
+      about: about || 'Siberpunk platform sakini.',
+      avatar_frame: avatar_frame || 'none',
+      profile_banner: profile_banner || 'linear-gradient(135deg, #00f0ff, #8a2be2)',
+      badges: '🎮',
+      is_admin: 0
+    };
+    dbData.users.push(user);
+  }
+
+  if (display_name) user.display_name = display_name.trim();
+  if (avatar) user.avatar = avatar;
+  if (about) user.about = about;
+  if (avatar_frame) user.avatar_frame = avatar_frame;
+  if (profile_banner) user.profile_banner = profile_banner;
+  if (custom_status !== undefined) user.custom_status = custom_status;
+
+  await saveDb();
+  res.json({ success: true, message: 'Profil başarıyla güncellendi!' });
+});
 
 // Kullanıcı Arama (Kısmi kullanıcı adı / Görünen ad)
 app.get('/api/users/search', (req, res) => {
@@ -229,12 +259,14 @@ app.get('/api/users/search', (req, res) => {
   if (!q || !q.trim()) return res.json({ success: true, results: [] });
 
   const queryLower = q.trim().toLowerCase();
+  const reqUsername = username ? username.trim().toLowerCase() : '';
+
   const results = dbData.users
-    .filter(u => u.username !== username && (u.username.toLowerCase().includes(queryLower) || (u.display_name && u.display_name.toLowerCase().includes(queryLower))))
+    .filter(u => u.username.toLowerCase() !== reqUsername && (u.username.toLowerCase().includes(queryLower) || (u.display_name && u.display_name.toLowerCase().includes(queryLower))))
     .slice(0, 15)
     .map(u => {
-      const isFriend = dbData.friends.some(f => (f.user1 === username && f.user2 === u.username) || (f.user1 === u.username && f.user2 === username));
-      const pendingReq = dbData.friend_requests.find(r => r.status === 'pending' && ((r.sender === username && r.receiver === u.username) || (r.sender === u.username && r.receiver === username)));
+      const isFriend = dbData.friends.some(f => (f.user1.toLowerCase() === reqUsername && f.user2.toLowerCase() === u.username.toLowerCase()) || (f.user1.toLowerCase() === u.username.toLowerCase() && f.user2.toLowerCase() === reqUsername));
+      const pendingReq = dbData.friend_requests.find(r => r.status === 'pending' && ((r.sender.toLowerCase() === reqUsername && r.receiver.toLowerCase() === u.username.toLowerCase()) || (r.sender.toLowerCase() === u.username.toLowerCase() && r.receiver.toLowerCase() === reqUsername)));
       const isOnline = !!online_users[u.username] && online_users[u.username].status !== 'invisible';
 
       return {
@@ -260,34 +292,52 @@ app.post('/api/friends/request', async (req, res) => {
   const cleanFriendName = friendName.trim();
   if (username.toLowerCase() === cleanFriendName.toLowerCase()) return res.json({ success: false, message: 'Kendinize arkadaşlık isteği gönderemezsiniz!' });
 
-  const senderUser = dbData.users.find(u => u.username === username);
-  const targetUser = dbData.users.find(u => u.username.toLowerCase() === cleanFriendName.toLowerCase());
-  if (!senderUser || !targetUser) return res.json({ success: false, message: 'Bu isimde bir kullanıcı bulunamadı!' });
+  let senderUser = dbData.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+  let targetUser = dbData.users.find(u => u.username.toLowerCase() === cleanFriendName.toLowerCase());
+
+  if (!senderUser) {
+    senderUser = {
+      id: Date.now(),
+      username: username,
+      password: '',
+      display_name: username,
+      avatar: '🎮',
+      about: 'Siberpunk platform sakini.',
+      avatar_frame: 'none',
+      profile_banner: 'linear-gradient(135deg, #00f0ff, #8a2be2)',
+      badges: '🎮',
+      is_admin: 0
+    };
+    dbData.users.push(senderUser);
+    await saveDb();
+  }
+
+  if (!targetUser) return res.json({ success: false, message: 'Bu isimde bir kullanıcı bulunamadı!' });
 
   const realTargetName = targetUser.username;
 
   // Engelleme kontrolü
   const isBlocked = dbData.blocked_users.some(b => 
-    (b.blocker === username && b.blocked === realTargetName) || 
-    (b.blocker === realTargetName && b.blocked === username)
+    (b.blocker.toLowerCase() === username.toLowerCase() && b.blocked.toLowerCase() === realTargetName.toLowerCase()) || 
+    (b.blocker.toLowerCase() === realTargetName.toLowerCase() && b.blocked.toLowerCase() === username.toLowerCase())
   );
   if (isBlocked) return res.json({ success: false, message: 'Bu kullanıcıyla arkadaşlık işlemi yapılamaz.' });
 
   // Zaten arkadaşlar mı?
   const alreadyFriends = dbData.friends.some(f => 
-    (f.user1 === username && f.user2 === realTargetName) || 
-    (f.user1 === realTargetName && f.user2 === username)
+    (f.user1.toLowerCase() === username.toLowerCase() && f.user2.toLowerCase() === realTargetName.toLowerCase()) || 
+    (f.user1.toLowerCase() === realTargetName.toLowerCase() && f.user2.toLowerCase() === username.toLowerCase())
   );
   if (alreadyFriends) return res.json({ success: false, message: 'Bu kullanıcı zaten arkadaşınız!' });
 
   // Bekleyen istek var mı?
   const existingReq = dbData.friend_requests.find(r => 
-    (r.sender === username && r.receiver === realTargetName && r.status === 'pending') ||
-    (r.sender === realTargetName && r.receiver === username && r.status === 'pending')
+    (r.sender.toLowerCase() === username.toLowerCase() && r.receiver.toLowerCase() === realTargetName.toLowerCase() && r.status === 'pending') ||
+    (r.sender.toLowerCase() === realTargetName.toLowerCase() && r.receiver.toLowerCase() === username.toLowerCase() && r.status === 'pending')
   );
 
   if (existingReq) {
-    if (existingReq.sender === realTargetName) {
+    if (existingReq.sender.toLowerCase() === realTargetName.toLowerCase()) {
       existingReq.status = 'accepted';
       dbData.friends.push({ user1: username, user2: realTargetName, created_at: new Date().toISOString() });
       await saveDb();

@@ -1237,6 +1237,20 @@ tabLogin.addEventListener('click', () => switchTab('login'));
 tabRegister.addEventListener('click', () => switchTab('register'));
 tabGuest.addEventListener('click', () => switchTab('guest'));
 
+if (authUsernameInput) {
+    authUsernameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            if (authMode === 'guest') authActionBtn.click();
+            else if (authPasswordInput) authPasswordInput.focus();
+        }
+    });
+}
+if (authPasswordInput) {
+    authPasswordInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') authActionBtn.click();
+    });
+}
+
 authActionBtn.addEventListener('click', async () => {
     const username = authUsernameInput.value.trim();
     const password = authPasswordInput.value.trim();
@@ -1268,20 +1282,21 @@ authActionBtn.addEventListener('click', async () => {
             });
             const data = await res.json();
             if (data.success) {
-                if (authMode === 'register') {
-                    authMessage.style.color = '#00f0ff';
-                    authMessage.textContent = 'Kayıt başarılı! Giriş yapabilirsiniz.';
-                    switchTab('login');
-                } else {
+                authMessage.style.color = '#00f0ff';
+                authMessage.textContent = data.message || (authMode === 'register' ? 'Kayıt başarılı! Giriş yapılıyor...' : 'Giriş başarılı!');
+                if (data.user) {
                     data.user.password = password;
                     saveSavedAccount(data.user);
-                    enterApp(data.user);
+                    setTimeout(() => enterApp(data.user), 300);
+                } else if (authMode === 'register') {
+                    switchTab('login');
                 }
             } else {
                 authMessage.style.color = '#ff3366';
-                authMessage.textContent = data.message;
+                authMessage.textContent = data.message || 'Hata oluştu!';
             }
         } catch (e) {
+            authMessage.style.color = '#ff3366';
             authMessage.textContent = 'Sunucuya bağlanılamadı.';
         }
     }
