@@ -1061,7 +1061,7 @@ app.get('/api/users/blocked', (req, res) => {
       }
       
       socket.join(room);
-      user_sessions[socket.id] = { room, username, muted: true, avatar };
+      user_sessions[socket.id] = { room, username, muted: false, avatar };
       
       let is_host = false;
       if (!active_rooms[room]) {
@@ -1094,7 +1094,7 @@ app.get('/api/users/blocked', (req, res) => {
       io.to(room).emit('room_users_list', users_in_this_room);
       io.to(socket.id).emit('room_info', { is_host, type: active_rooms[room].type, roomName: room });
       io.to(socket.id).emit('update_queue', { queue: active_rooms[room].queue });
-      socket.to(room).emit('user_joined', { username, sid: socket.id, muted: true, avatar });
+      socket.to(room).emit('user_joined', { username, sid: socket.id, muted: false, avatar });
       io.to(room).emit('receive_message', { username: 'Sistem', message: `${username} odaya katıldı.`, type: 'system' });
       
       if (active_rooms[room].currentVideoUrl) {
