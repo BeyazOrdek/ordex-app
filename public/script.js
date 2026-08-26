@@ -2026,21 +2026,32 @@ if (userSearchInput && userSearchResults) {
         }, 300);
     });
 
+    userSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            clearTimeout(searchDebounceTimer);
+            const query = userSearchInput.value.trim();
+            if (query) searchUsers(query);
+        }
+    });
+
     document.addEventListener('click', (e) => {
-        if (!userSearchInput.contains(e.target) && !userSearchResults.contains(e.target)) {
+        if (userSearchInput && userSearchResults && !userSearchInput.contains(e.target) && !userSearchResults.contains(e.target)) {
             userSearchResults.classList.add('hidden');
         }
     });
 }
 
 async function searchUsers(query) {
-    if (!myUsername) return;
+    if (!myUsername || !userSearchResults) return;
     try {
+        userSearchResults.classList.remove('hidden');
+        userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:var(--neon-cyan); text-align:center;">🔍 Aratılıyor...</div>';
+
         const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}&username=${encodeURIComponent(myUsername)}`);
         const data = await res.json();
         userSearchResults.innerHTML = '';
         if (data.success && data.results && data.results.length > 0) {
-            userSearchResults.classList.remove('hidden');
             data.results.forEach(u => {
                 const div = document.createElement('div');
                 div.className = 'search-result-item';
@@ -2054,7 +2065,7 @@ async function searchUsers(query) {
                 }
 
                 div.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px; cursor:pointer;" onclick="event.stopPropagation(); window.openUserProfileModal('${u.username}')" title="Profili Görüntüle">
                         <div class="user-avatar small ${u.avatarFrame || 'none'}">${renderAvatar(u.avatar, u.avatarFrame)}</div>
                         <div style="display:flex; flex-direction:column;">
                             <span style="font-size:0.85rem; font-weight:bold;">${u.displayName}</span>
@@ -2066,7 +2077,7 @@ async function searchUsers(query) {
 
                 div.addEventListener('click', () => {
                     userSearchResults.classList.add('hidden');
-                    userSearchInput.value = '';
+                    if (userSearchInput) userSearchInput.value = '';
                     openPrivateChat({
                         username: u.username,
                         displayName: u.displayName,
@@ -2080,10 +2091,14 @@ async function searchUsers(query) {
                 userSearchResults.appendChild(div);
             });
         } else {
-            userSearchResults.classList.remove('hidden');
             userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#888; text-align:center;">Kullanıcı bulunamadı.</div>';
         }
-    } catch(e) { console.error(e); }
+    } catch(e) { 
+        console.error(e); 
+        if (userSearchResults) {
+            userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#ff3366; text-align:center;">Arama sırasında hata oluştu.</div>';
+        }
+    }
 }
 
 // --- ARKADAŞLIK İSTEĞİ FONKSİYONLARI ---
