@@ -786,8 +786,44 @@ window.addEventListener('pagehide', () => {
 });
 
 // =========================================================================
-// WEBRTC SES VE GÜRÜLTÜ ENGELLEME AYARLARI
+// WEBRTC SES, ELECTRON UYUMU VE GÜRÜLTÜ ENGELLEME AYARLARI
 // =========================================================================
+
+function isElectronApp() {
+    return !!(window.electronAPI && (window.electronAPI.isElectron || window.electronAPI.isElectronApp)) || /electron/i.test(navigator.userAgent);
+}
+
+async function getAudioStreamWithPermission(constraints) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('getUserMedia bu cihazda/tarayıcıda desteklenmiyor.');
+    }
+
+    if (window.electronAPI) {
+        try {
+            if (typeof window.electronAPI.requestMicrophonePermission === 'function') {
+                await window.electronAPI.requestMicrophonePermission();
+            } else if (typeof window.electronAPI.requestPermission === 'function') {
+                await window.electronAPI.requestPermission('microphone');
+            } else if (typeof window.electronAPI.askMicrophone === 'function') {
+                await window.electronAPI.askMicrophone();
+            }
+        } catch (e) {
+            console.warn('Electron mikrofon izin isteği uyarısı:', e);
+        }
+    }
+
+    try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+        if (constraints && constraints.audio && typeof constraints.audio === 'object' && constraints.audio.deviceId) {
+            console.warn('Seçili mikrofon ile açılamadı, varsayılan mikrofon cihazı deneniyor...');
+            const fallbackConstraints = JSON.parse(JSON.stringify(constraints));
+            delete fallbackConstraints.audio.deviceId;
+            return await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+        }
+        throw err;
+    }
+}
 
 function getAudioSettingsConstraints() {
     let ns = true, ec = true, agc = true;
@@ -805,7 +841,11 @@ function getAudioSettingsConstraints() {
     if (settingEchoCancellation) settingEchoCancellation.checked = ec;
     if (settingAutoGain) settingAutoGain.checked = agc;
 
-    return { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc };
+    const audioConstraints = { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc };
+    if (settingMicDevice && settingMicDevice.value) {
+        audioConstraints.deviceId = { exact: settingMicDevice.value };
+    }
+    return audioConstraints;
 }
 
 function saveAndApplyAudioSettings() {
@@ -922,7 +962,7 @@ async function startDmCall(type) {
     activeCallStrip.classList.add('hidden');
 
     try {
-        localDmStream = await navigator.mediaDevices.getUserMedia({
+        localDmStream = await getAudioStreamWithPermission({
             audio: getAudioSettingsConstraints(),
             video: type === 'video'
         });
@@ -978,7 +1018,7 @@ if (acceptCallBtn) acceptCallBtn.addEventListener('click', async () => {
     activeCallStrip.classList.add('hidden');
 
     try {
-        localDmStream = await navigator.mediaDevices.getUserMedia({
+        localDmStream = await getAudioStreamWithPermission({
             audio: getAudioSettingsConstraints(),
             video: dmCallType === 'video'
         });
@@ -1516,7 +1556,7 @@ socket.on('update_queue', (data) => {
 async function requestMicrophonePermission() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try {
-        localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioSettingsConstraints(), video: false });
+        localAudioStream = await getAudioStreamWithPermission({ audio: getAudioSettingsConstraints(), video: false });
         
         const isCurrentlyMuted = micToggleBtn ? micToggleBtn.textContent.includes('Aç') : false;
         localAudioStream.getAudioTracks().forEach(t => t.enabled = !isCurrentlyMuted);
@@ -1628,6 +1668,8 @@ socket.on('kicked_from_room', () => {
     leaveCurrentRoom();
 });
 
+let selectedAudioOutputDeviceId = '';
+
 function playRemoteAudioTrack(stream, targetSid) {
     let audioEl = document.getElementById('audio-' + targetSid);
     if (!audioEl) {
@@ -1638,6 +1680,13 @@ function playRemoteAudioTrack(stream, targetSid) {
         document.body.appendChild(audioEl);
     }
     audioEl.srcObject = stream;
+    audioEl.muted = isDeafenedGlobal;
+    if (settingOutputVolume) {
+        audioEl.volume = (settingOutputVolume.value || 100) / 100;
+    }
+    if (selectedAudioOutputDeviceId && typeof audioEl.setSinkId === 'function') {
+        audioEl.setSinkId(selectedAudioOutputDeviceId).catch(() => {});
+    }
     audioEl.play().catch(err => {
         console.log("Autoplay engellendi, kullanıcı etkileşimi bekleniyor:", err);
         pendingAudioElements.add(audioEl);
@@ -2573,12 +2622,26 @@ async function loadAudioDevices() {
     } catch (e) { console.error(e); }
 }
 
+if (settingAudioDevice) {
+    settingAudioDevice.addEventListener('change', (e) => {
+        selectedAudioOutputDeviceId = e.target.value;
+        document.querySelectorAll('audio').forEach(audioEl => {
+            if (typeof audioEl.setSinkId === 'function' && selectedAudioOutputDeviceId) {
+                audioEl.setSinkId(selectedAudioOutputDeviceId).catch(console.error);
+            }
+        });
+    });
+}
+
 if (settingOutputVolume) {
     settingOutputVolume.addEventListener('input', (e) => {
         const vol = e.target.value / 100;
         const valSpan = document.getElementById('output-vol-val');
         if (valSpan) valSpan.textContent = e.target.value;
         if (remoteDmAudio) remoteDmAudio.volume = vol;
+        document.querySelectorAll('audio[id^="audio-"]').forEach(audioEl => {
+            audioEl.volume = vol;
+        });
     });
 }
 
