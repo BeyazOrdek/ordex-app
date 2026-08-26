@@ -61,7 +61,7 @@ const myDisplayNameEl = document.getElementById('my-display-name');
 const myUsernameTagEl = document.getElementById('my-username-tag');
 const profileMicBtn = document.getElementById('profile-mic-btn');
 const profileDeafenBtn = document.getElementById('profile-deafen-btn');
-const openProfileBtn = document.getElementById('open-profile-btn');
+const openProfileBtn = document.getElementById('open-profile-modal-btn') || document.getElementById('open-profile-btn');
 const myStatusIndicator = document.getElementById('my-status-indicator');
 const statusSwitcherMenu = document.getElementById('status-switcher-menu');
 
@@ -2985,19 +2985,31 @@ function openMyOwnProfileInSidebar() {
     `;
 }
 
+function openMyProfileSettingsModal() {
+    if (profileDisplaynameInput) profileDisplaynameInput.value = myDisplayName;
+    if (profileCustomstatusInput) profileCustomstatusInput.value = myCustomStatus;
+    if (profileAboutInput) profileAboutInput.value = myAbout;
+    if (profileAvatarUrlInput) profileAvatarUrlInput.value = myAvatar.startsWith('http') ? myAvatar : '';
+    if (profileBannerUrlInput) profileBannerUrlInput.value = myProfileBanner.startsWith('http') ? myProfileBanner : '';
+    updateLiveProfilePreview();
+    if (profileModal) profileModal.classList.remove('hidden');
+}
+
 if (openProfileBtn) {
-    openProfileBtn.addEventListener('click', () => {
-        profileDisplaynameInput.value = myDisplayName;
-        if (profileCustomstatusInput) profileCustomstatusInput.value = myCustomStatus;
-        profileAboutInput.value = myAbout;
-        profileAvatarUrlInput.value = myAvatar.startsWith('http') ? myAvatar : '';
-        profileBannerUrlInput.value = myProfileBanner.startsWith('http') ? myProfileBanner : '';
-        updateLiveProfilePreview();
-        profileModal.classList.remove('hidden');
-    });
+    openProfileBtn.addEventListener('click', openMyProfileSettingsModal);
+}
+
+if (myProfileNameTrigger) {
+    myProfileNameTrigger.addEventListener('click', openMyProfileSettingsModal);
 }
 
 if (closeProfileBtn) closeProfileBtn.addEventListener('click', () => profileModal.classList.add('hidden'));
+
+if (profileModal) {
+    profileModal.addEventListener('click', (e) => {
+        if (e.target === profileModal) profileModal.classList.add('hidden');
+    });
+}
 
 if (tabProfGen) tabProfGen.addEventListener('click', () => switchProfTab('gen'));
 if (tabProfDecor) tabProfDecor.addEventListener('click', () => switchProfTab('decor'));
