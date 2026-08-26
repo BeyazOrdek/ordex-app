@@ -24,6 +24,8 @@ const dbPath = path.join(process.cwd(), 'database.json');
 let dbData = { 
   users: [], 
   friends: [], 
+  friend_requests: [],
+  blocked_users: [],
   private_messages: [],
   groups: [],
   group_members: [],
@@ -38,10 +40,47 @@ async function loadDb() {
   try {
     const data = await fs.readFile(dbPath, 'utf8');
     dbData = JSON.parse(data);
-    if (!dbData.guilds) dbData.guilds = [];
-    if (!dbData.guild_members) dbData.guild_members = [];
-    if (!dbData.guild_channels) dbData.guild_channels = [];
-    if (!dbData.guild_messages) dbData.guild_messages = [];
+    if (!Array.isArray(dbData.users)) dbData.users = [];
+    if (!Array.isArray(dbData.friends)) dbData.friends = [];
+    if (!Array.isArray(dbData.friend_requests)) dbData.friend_requests = [];
+    if (!Array.isArray(dbData.blocked_users)) dbData.blocked_users = [];
+    if (!Array.isArray(dbData.private_messages)) dbData.private_messages = [];
+    if (!Array.isArray(dbData.groups)) dbData.groups = [];
+    if (!Array.isArray(dbData.group_members)) dbData.group_members = [];
+    if (!Array.isArray(dbData.group_messages)) dbData.group_messages = [];
+    if (!Array.isArray(dbData.guilds)) dbData.guilds = [];
+    if (!Array.isArray(dbData.guild_members)) dbData.guild_members = [];
+    if (!Array.isArray(dbData.guild_channels)) dbData.guild_channels = [];
+    if (!Array.isArray(dbData.guild_messages)) dbData.guild_messages = [];
+
+    // Veritabanı Temizliği ve Mükerrer/Yetim Kayıt Onarımı
+    const validUsernames = new Set(dbData.users.map(u => u.username));
+    
+    // 1. Mükerrer ve yetim arkadaşlıkları temizle
+    const cleanFriends = [];
+    const friendPairs = new Set();
+    for (const f of dbData.friends) {
+      if (f && f.user1 && f.user2 && validUsernames.has(f.user1) && validUsernames.has(f.user2) && f.user1 !== f.user2) {
+        const pairKey = [f.user1, f.user2].sort().join(':::');
+        if (!friendPairs.has(pairKey)) {
+          friendPairs.add(pairKey);
+          cleanFriends.push({ user1: f.user1, user2: f.user2, created_at: f.created_at || new Date().toISOString() });
+        }
+      }
+    }
+    dbData.friends = cleanFriends;
+
+    // 2. Yetim arkadaşlık isteklerini temizle
+    dbData.friend_requests = dbData.friend_requests.filter(req => 
+      req && req.sender && req.receiver && validUsernames.has(req.sender) && validUsernames.has(req.receiver) && req.sender !== req.receiver
+    );
+
+    // 3. Yetim DM mesajlarını temizle
+    dbData.private_messages = dbData.private_messages.filter(msg =>
+      msg && msg.sender && msg.receiver && validUsernames.has(msg.sender) && validUsernames.has(msg.receiver)
+    );
+
+    await saveDb();
   } catch (err) {
     await saveDb();
   }
@@ -72,18 +111,19 @@ app.post('/api/register', async (req, res) => {
   const { username, password, display_name, avatar, about, avatar_frame, profile_banner, badges } = req.body;
   if (!username || !password) return res.json({ success: false, message: 'Kullanıcı adı ve şifre zorunludur!' });
 
-  const exists = dbData.users.find(u => u.username === username);
+  const cleanUsername = username.trim();
+  const exists = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
   if (exists) {
     return res.json({ success: false, message: 'Kullanıcı adı zaten alınmış!' });
   }
 
-  const is_admin = username === 'admin' ? 1 : 0;
+  const is_admin = cleanUsername === 'admin' ? 1 : 0;
   
   dbData.users.push({
     id: Date.now(),
-    username,
+    username: cleanUsername,
     password,
-    display_name: display_name || username,
+    display_name: display_name ? display_name.trim() : cleanUsername,
     avatar: avatar || '🎮',
     about: about || 'Siberpunk platform sakini.',
     avatar_frame: avatar_frame || 'none',
@@ -98,7 +138,8 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
-  const user = dbData.users.find(u => u.username === username);
+  const cleanUsername = username ? username.trim() : '';
+  const user = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
   if (user && user.password === password) {
     const { password: _, ...userWithoutPass } = user;
     res.json({ success: true, user: userWithoutPass });
@@ -127,7 +168,7 @@ app.post('/api/profile/update', async (req, res) => {
   if (userIndex !== -1) {
     dbData.users[userIndex] = {
       ...dbData.users[userIndex],
-      display_name,
+      display_name: display_name ? display_name.trim() : dbData.users[userIndex].display_name,
       avatar,
       about,
       avatar_frame,
@@ -137,7 +178,7 @@ app.post('/api/profile/update', async (req, res) => {
     await saveDb();
 
     if (online_users[username]) {
-      online_users[username].display_name = display_name;
+      online_users[username].display_name = dbData.users[userIndex].display_name;
       online_users[username].avatar = avatar;
       online_users[username].frame = avatar_frame;
       online_users[username].banner = profile_banner;
@@ -145,7 +186,7 @@ app.post('/api/profile/update', async (req, res) => {
     }
     
     io.emit('user_profile_updated', {
-      username, display_name, avatar, about, avatar_frame, profile_banner, custom_status,
+      username, display_name: dbData.users[userIndex].display_name, avatar, about, avatar_frame, profile_banner, custom_status,
       badges: dbData.users[userIndex].badges,
       is_admin: dbData.users[userIndex].is_admin
     });
@@ -180,32 +221,258 @@ app.post('/api/admin/assign_badge', async (req, res) => {
   }
 });
 
+// ================= ARKADAŞLIK & KULLANICI ARAMA APILERI =================
+
+// Kullanıcı Arama (Kısmi kullanıcı adı / Görünen ad)
+app.get('/api/users/search', (req, res) => {
+  const { q, username } = req.query;
+  if (!q || !q.trim()) return res.json({ success: true, results: [] });
+
+  const queryLower = q.trim().toLowerCase();
+  const results = dbData.users
+    .filter(u => u.username !== username && (u.username.toLowerCase().includes(queryLower) || (u.display_name && u.display_name.toLowerCase().includes(queryLower))))
+    .slice(0, 15)
+    .map(u => {
+      const isFriend = dbData.friends.some(f => (f.user1 === username && f.user2 === u.username) || (f.user1 === u.username && f.user2 === username));
+      const pendingReq = dbData.friend_requests.find(r => r.status === 'pending' && ((r.sender === username && r.receiver === u.username) || (r.sender === u.username && r.receiver === username)));
+      const isOnline = !!online_users[u.username] && online_users[u.username].status !== 'invisible';
+
+      return {
+        username: u.username,
+        displayName: u.display_name || u.username,
+        avatar: u.avatar || '🎮',
+        avatarFrame: u.avatar_frame || 'none',
+        about: u.about || '',
+        isFriend,
+        hasPendingReq: !!pendingReq,
+        pendingSender: pendingReq ? pendingReq.sender : null,
+        isOnline
+      };
+    });
+
+  res.json({ success: true, results });
+});
+
+// Arkadaşlık İsteği Gönderme
+app.post('/api/friends/request', async (req, res) => {
+  const { username, friendName } = req.body;
+  if (!username || !friendName) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+  const cleanFriendName = friendName.trim();
+  if (username.toLowerCase() === cleanFriendName.toLowerCase()) return res.json({ success: false, message: 'Kendinize arkadaşlık isteği gönderemezsiniz!' });
+
+  const senderUser = dbData.users.find(u => u.username === username);
+  const targetUser = dbData.users.find(u => u.username.toLowerCase() === cleanFriendName.toLowerCase());
+  if (!senderUser || !targetUser) return res.json({ success: false, message: 'Bu isimde bir kullanıcı bulunamadı!' });
+
+  const realTargetName = targetUser.username;
+
+  // Engelleme kontrolü
+  const isBlocked = dbData.blocked_users.some(b => 
+    (b.blocker === username && b.blocked === realTargetName) || 
+    (b.blocker === realTargetName && b.blocked === username)
+  );
+  if (isBlocked) return res.json({ success: false, message: 'Bu kullanıcıyla arkadaşlık işlemi yapılamaz.' });
+
+  // Zaten arkadaşlar mı?
+  const alreadyFriends = dbData.friends.some(f => 
+    (f.user1 === username && f.user2 === realTargetName) || 
+    (f.user1 === realTargetName && f.user2 === username)
+  );
+  if (alreadyFriends) return res.json({ success: false, message: 'Bu kullanıcı zaten arkadaşınız!' });
+
+  // Bekleyen istek var mı?
+  const existingReq = dbData.friend_requests.find(r => 
+    (r.sender === username && r.receiver === realTargetName && r.status === 'pending') ||
+    (r.sender === realTargetName && r.receiver === username && r.status === 'pending')
+  );
+
+  if (existingReq) {
+    if (existingReq.sender === realTargetName) {
+      existingReq.status = 'accepted';
+      dbData.friends.push({ user1: username, user2: realTargetName, created_at: new Date().toISOString() });
+      await saveDb();
+
+      if (online_users[realTargetName]) io.to(online_users[realTargetName].sid).emit('friends_updated');
+      if (online_users[username]) io.to(online_users[username].sid).emit('friends_updated');
+
+      return res.json({ success: true, message: `${realTargetName} de size istek göndermişti, otomatik arkadaş olundu!` });
+    }
+    return res.json({ success: false, message: 'Bekleyen bir arkadaşlık isteği zaten var!' });
+  }
+
+  // Yeni İstek Oluştur
+  const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+  dbData.friend_requests.push({
+    id: reqId,
+    sender: username,
+    receiver: realTargetName,
+    status: 'pending',
+    created_at: new Date().toISOString()
+  });
+
+  await saveDb();
+
+  if (online_users[realTargetName]) {
+    io.to(online_users[realTargetName].sid).emit('friend_request_received', {
+      id: reqId,
+      sender: username,
+      displayName: senderUser.display_name,
+      avatar: senderUser.avatar
+    });
+    io.to(online_users[realTargetName].sid).emit('friends_updated');
+  }
+  if (online_users[username]) {
+    io.to(online_users[username].sid).emit('friends_updated');
+  }
+
+  res.json({ success: true, message: `'${targetUser.display_name}' kullanıcısına arkadaşlık isteği gönderildi!` });
+});
+
+// Gelen & Giden Arkadaşlık İstekleri Listesi
+app.get('/api/friends/requests', (req, res) => {
+  const username = req.query.username;
+  if (!username) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+
+  const pendingReceived = dbData.friend_requests
+    .filter(r => r.receiver === username && r.status === 'pending')
+    .map(r => {
+      const u = dbData.users.find(user => user.username === r.sender);
+      return {
+        id: r.id,
+        username: r.sender,
+        displayName: u ? u.display_name : r.sender,
+        avatar: u ? u.avatar : '🎮',
+        avatarFrame: u ? u.avatar_frame : 'none',
+        badges: u ? u.badges : '🎮',
+        created_at: r.created_at
+      };
+    });
+
+  const pendingSent = dbData.friend_requests
+    .filter(r => r.sender === username && r.status === 'pending')
+    .map(r => {
+      const u = dbData.users.find(user => user.username === r.receiver);
+      return {
+        id: r.id,
+        username: r.receiver,
+        displayName: u ? u.display_name : r.receiver,
+        avatar: u ? u.avatar : '🎮',
+        avatarFrame: u ? u.avatar_frame : 'none',
+        badges: u ? u.badges : '🎮',
+        created_at: r.created_at
+      };
+    });
+
+  res.json({ success: true, received: pendingReceived, sent: pendingSent });
+});
+
+// Arkadaşlık İsteğini Kabul Etme
+app.post('/api/friends/accept', async (req, res) => {
+  const { username, requestId, friendName } = req.body;
+  if (!username) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+
+  let requestIndex = -1;
+  if (requestId) {
+    requestIndex = dbData.friend_requests.findIndex(r => r.id === requestId && r.receiver === username && r.status === 'pending');
+  } else if (friendName) {
+    requestIndex = dbData.friend_requests.findIndex(r => r.sender === friendName && r.receiver === username && r.status === 'pending');
+  }
+
+  if (requestIndex === -1) return res.json({ success: false, message: 'Arkadaşlık isteği bulunamadı!' });
+
+  const reqObj = dbData.friend_requests[requestIndex];
+  dbData.friend_requests.splice(requestIndex, 1);
+
+  const alreadyFriends = dbData.friends.some(f =>
+    (f.user1 === reqObj.sender && f.user2 === reqObj.receiver) ||
+    (f.user1 === reqObj.receiver && f.user2 === reqObj.sender)
+  );
+
+  if (!alreadyFriends) {
+    dbData.friends.push({ user1: reqObj.sender, user2: reqObj.receiver, created_at: new Date().toISOString() });
+  }
+  await saveDb();
+
+  if (online_users[reqObj.sender]) io.to(online_users[reqObj.sender].sid).emit('friends_updated');
+  if (online_users[reqObj.receiver]) io.to(online_users[reqObj.receiver].sid).emit('friends_updated');
+
+  res.json({ success: true, message: 'Arkadaşlık isteği kabul edildi!' });
+});
+
+// Arkadaşlık İsteğini Reddetme / İptal Etme
+app.post('/api/friends/reject', async (req, res) => {
+  const { username, requestId, friendName } = req.body;
+  if (!username) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+
+  const initialLen = dbData.friend_requests.length;
+  let targetUser = friendName;
+
+  dbData.friend_requests = dbData.friend_requests.filter(r => {
+    if (requestId && r.id === requestId) {
+      targetUser = r.sender === username ? r.receiver : r.sender;
+      return false;
+    }
+    if (friendName && ((r.sender === username && r.receiver === friendName) || (r.sender === friendName && r.receiver === username))) {
+      return false;
+    }
+    return true;
+  });
+
+  if (dbData.friend_requests.length !== initialLen) {
+    await saveDb();
+    if (targetUser && online_users[targetUser]) io.to(online_users[targetUser].sid).emit('friends_updated');
+    if (online_users[username]) io.to(online_users[username].sid).emit('friends_updated');
+  }
+
+  res.json({ success: true, message: 'İstek kaldırıldı.' });
+});
+
+// Arkadaşlıktan Çıkarma
+app.post('/api/friends/remove', async (req, res) => {
+  const { username, friendName } = req.body;
+  if (!username || !friendName) return res.json({ success: false, message: 'Geçersiz işlem!' });
+
+  const initialLen = dbData.friends.length;
+  dbData.friends = dbData.friends.filter(f => 
+    !((f.user1 === username && f.user2 === friendName) || (f.user1 === friendName && f.user2 === username))
+  );
+
+  if (dbData.friends.length !== initialLen) {
+    await saveDb();
+    if (online_users[friendName]) io.to(online_users[friendName].sid).emit('friends_updated');
+    if (online_users[username]) io.to(online_users[username].sid).emit('friends_updated');
+  }
+
+  res.json({ success: true, message: 'Arkadaşlıktan çıkarıldı.' });
+});
+
+// Geriye Dönük Uyumluluk için /api/friends/add
 app.post('/api/friends/add', async (req, res) => {
   const { username, friendName } = req.body;
-  
-  if (username === friendName) return res.json({ success: false, message: 'Kendinizi ekleyemezsiniz!' });
-  
-  const friendExists = dbData.users.find(u => u.username === friendName);
-  if (!friendExists) return res.json({ success: false, message: 'Kullanıcı bulunamadı!' });
+  if (!username || !friendName) return res.json({ success: false, message: 'Kullanıcı adı gerekli!' });
+  const senderUser = dbData.users.find(u => u.username === username);
+  const targetUser = dbData.users.find(u => u.username.toLowerCase() === friendName.trim().toLowerCase());
+  if (!targetUser) return res.json({ success: false, message: 'Kullanıcı bulunamadı!' });
 
-  const alreadyFriends = dbData.friends.find(f => 
-    (f.user1 === username && f.user2 === friendName) || 
-    (f.user1 === friendName && f.user2 === username)
-  );
-  
-  if (alreadyFriends) return res.json({ success: false, message: 'Zaten arkadaşsınız!' });
+  const realTarget = targetUser.username;
+  if (username === realTarget) return res.json({ success: false, message: 'Kendinizi ekleyemezsiniz!' });
 
-  dbData.friends.push({ user1: username, user2: friendName });
+  const alreadyFriends = dbData.friends.some(f => (f.user1 === username && f.user2 === realTarget) || (f.user1 === realTarget && f.user2 === username));
+  if (alreadyFriends) return res.json({ success: false, message: 'Bu kullanıcı zaten arkadaşınız!' });
+
+  dbData.friends.push({ user1: username, user2: realTarget, created_at: new Date().toISOString() });
   await saveDb();
-  
-  if (online_users[friendName]) io.to(online_users[friendName].sid).emit('friends_updated');
+
+  if (online_users[realTarget]) io.to(online_users[realTarget].sid).emit('friends_updated');
   if (online_users[username]) io.to(online_users[username].sid).emit('friends_updated');
-  
+
   res.json({ success: true, message: 'Arkadaş eklendi!' });
 });
 
 app.get('/api/friends/list', (req, res) => {
   const username = req.query.username;
+  if (!username) return res.json({ success: false, friends: [] });
+
   const friendRels = dbData.friends.filter(f => f.user1 === username || f.user2 === username);
   
   const friends = [];
@@ -222,15 +489,15 @@ app.get('/api/friends/list', (req, res) => {
 
       friends.push({
         username: f_username,
-        displayName: f_data.display_name,
-        avatar: f_data.avatar,
-        about: f_data.about,
-        avatarFrame: f_data.avatar_frame,
-        profileBanner: f_data.profile_banner,
+        displayName: f_data.display_name || f_username,
+        avatar: f_data.avatar || '🎮',
+        about: f_data.about || '',
+        avatarFrame: f_data.avatar_frame || 'none',
+        profileBanner: f_data.profile_banner || '',
         customStatus: online_users[f_username] && online_users[f_username].custom_status !== undefined ? online_users[f_username].custom_status : f_data.custom_status,
         userStatus: online_users[f_username] ? (online_users[f_username].status || 'online') : 'offline',
-        badges: f_data.badges,
-        isAdmin: f_data.is_admin,
+        badges: f_data.badges || '🎮',
+        isAdmin: f_data.is_admin || 0,
         lastMessageTime: last_msg ? last_msg.timestamp : '1970-01-01T00:00:00Z',
         isOnline: !!online_users[f_username] && online_users[f_username].status !== 'invisible'
       });
@@ -413,7 +680,14 @@ app.get('/api/guilds/messages', (req, res) => {
 });
 
 app.get('/api/pm/history', (req, res) => {
-  const { user1, user2 } = req.query;
+  const { user1, user2, requester } = req.query;
+  if (!user1 || !user2) return res.json({ success: false, history: [] });
+
+  // Güvenlik Kontrolü: İstekte bulunan kullanıcı yalnızca kendisinin taraf olduğu sohbeti okuyabilir!
+  if (requester && requester !== user1 && requester !== user2) {
+    return res.status(403).json({ success: false, message: 'Bu sohbet geçmişini okuma yetkiniz yok!' });
+  }
+
   const history = dbData.private_messages
     .filter(m => (m.sender === user1 && m.receiver === user2) || (m.sender === user2 && m.receiver === user1))
     .map(r => ({ sender: r.sender, receiver: r.receiver, message: r.message, time: r.timestamp, read: r.read }));
@@ -527,24 +801,159 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('send_private_message', async (data) => {
-    const { sender, receiver, message } = data;
-    if (sender && receiver && message) {
-      dbData.private_messages.push({
-        id: Date.now(),
-        sender,
-        receiver,
-        message,
-        timestamp: new Date().toISOString()
-      });
-      await saveDb();
-      
-      const msg_data = { sender, receiver, message };
-      if (online_users[receiver]) {
-        io.to(online_users[receiver].sid).emit('receive_private_message', msg_data);
-      }
-      io.to(socket.id).emit('receive_private_message', msg_data);
+// ================= KULLANICI ENGELLEME APİLERİ =================
+app.post('/api/users/block', async (req, res) => {
+  const { username, targetUser } = req.body;
+  if (!username || !targetUser || username === targetUser) return res.json({ success: false, message: 'Geçersiz işlem!' });
+
+  const exists = dbData.blocked_users.some(b => b.blocker === username && b.blocked === targetUser);
+  if (!exists) {
+    dbData.blocked_users.push({ blocker: username, blocked: targetUser, created_at: new Date().toISOString() });
+    
+    // Arkadaşlıktan ve isteklerden çıkar
+    dbData.friends = dbData.friends.filter(f => !((f.user1 === username && f.user2 === targetUser) || (f.user1 === targetUser && f.user2 === username)));
+    dbData.friend_requests = dbData.friend_requests.filter(r => !((r.sender === username && r.receiver === targetUser) || (r.sender === targetUser && r.receiver === username)));
+
+    await saveDb();
+
+    if (online_users[targetUser]) io.to(online_users[targetUser].sid).emit('friends_updated');
+    if (online_users[username]) io.to(online_users[username].sid).emit('friends_updated');
+  }
+
+  res.json({ success: true, message: `'${targetUser}' engellendi.` });
+});
+
+app.post('/api/users/unblock', async (req, res) => {
+  const { username, targetUser } = req.body;
+  if (!username || !targetUser) return res.json({ success: false, message: 'Geçersiz işlem!' });
+
+  dbData.blocked_users = dbData.blocked_users.filter(b => !(b.blocker === username && b.blocked === targetUser));
+  await saveDb();
+
+  res.json({ success: true, message: `'${targetUser}' kullanıcısının engeli kaldırıldı.` });
+});
+
+app.get('/api/users/blocked', (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.json({ success: false, blocked: [] });
+  const blockedList = dbData.blocked_users
+    .filter(b => b.blocker === username)
+    .map(b => {
+      const u = dbData.users.find(user => user.username === b.blocked);
+      return {
+        username: b.blocked,
+        displayName: u ? u.display_name : b.blocked,
+        avatar: u ? u.avatar : '🎮'
+      };
+    });
+  res.json({ success: true, blocked: blockedList });
+});
+
+  socket.on('typing_start', (data) => {
+    const { sender, receiver } = data;
+    if (sender && receiver && online_users[receiver]) {
+      io.to(online_users[receiver].sid).emit('user_typing_start', { sender });
     }
+  });
+
+  socket.on('typing_stop', (data) => {
+    const { sender, receiver } = data;
+    if (sender && receiver && online_users[receiver]) {
+      io.to(online_users[receiver].sid).emit('user_typing_stop', { sender });
+    }
+  });
+
+  socket.on('send_private_message', async (data) => {
+    const { sender, receiver, message, replyTo } = data;
+    if (!sender || !receiver || !message || typeof message !== 'string' || !message.trim()) {
+      return socket.emit('error_message', { message: 'Boş veya geçersiz mesaj gönderilemez!' });
+    }
+
+    const cleanMsg = message.trim();
+
+    // Alıcı var mı kontrol et
+    const receiverUser = dbData.users.find(u => u.username === receiver);
+    if (!receiverUser) {
+      return socket.emit('error_message', { message: 'Mesaj gönderilecek kullanıcı bulunamadı!' });
+    }
+
+    // Engellenmiş mi kontrol et
+    const isBlocked = dbData.blocked_users.some(b => 
+      (b.blocker === sender && b.blocked === receiver) || 
+      (b.blocker === receiver && b.blocked === sender)
+    );
+    if (isBlocked) {
+      return socket.emit('error_message', { message: 'Bu kullanıcıya mesaj gönderemezsiniz.' });
+    }
+
+    const msgId = 'pm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+    const newMsg = {
+      id: msgId,
+      sender,
+      receiver,
+      message: cleanMsg,
+      timestamp: new Date().toISOString(),
+      read: false,
+      replyTo: replyTo || null,
+      edited: false
+    };
+
+    dbData.private_messages.push(newMsg);
+    await saveDb();
+    
+    const msg_data = { 
+      id: msgId, 
+      sender, 
+      receiver, 
+      message: cleanMsg, 
+      time: newMsg.timestamp, 
+      read: false,
+      replyTo: newMsg.replyTo,
+      edited: false
+    };
+
+    if (online_users[receiver]) {
+      io.to(online_users[receiver].sid).emit('receive_private_message', msg_data);
+    }
+    io.to(socket.id).emit('receive_private_message', msg_data);
+  });
+
+  socket.on('edit_private_message', async (data) => {
+    const { msgId, sender, newMessage } = data;
+    if (!msgId || !sender || !newMessage || !newMessage.trim()) return;
+
+    const msgObj = dbData.private_messages.find(m => m.id === msgId);
+    if (!msgObj || msgObj.sender !== sender) {
+      return socket.emit('error_message', { message: 'Bu mesajı düzenleme yetkiniz yok!' });
+    }
+
+    msgObj.message = newMessage.trim();
+    msgObj.edited = true;
+    await saveDb();
+
+    const updatePayload = { msgId, newMessage: msgObj.message, receiver: msgObj.receiver, sender: msgObj.sender };
+    if (online_users[msgObj.receiver]) io.to(online_users[msgObj.receiver].sid).emit('private_message_edited', updatePayload);
+    if (online_users[msgObj.sender]) io.to(online_users[msgObj.sender].sid).emit('private_message_edited', updatePayload);
+  });
+
+  socket.on('delete_private_message', async (data) => {
+    const { msgId, sender } = data;
+    if (!msgId || !sender) return;
+
+    const msgIdx = dbData.private_messages.findIndex(m => m.id === msgId);
+    if (msgIdx === -1) return;
+    const msgObj = dbData.private_messages[msgIdx];
+
+    if (msgObj.sender !== sender) {
+      return socket.emit('error_message', { message: 'Bu mesajı silme yetkiniz yok!' });
+    }
+
+    dbData.private_messages.splice(msgIdx, 1);
+    await saveDb();
+
+    const deletePayload = { msgId, receiver: msgObj.receiver, sender: msgObj.sender };
+    if (online_users[msgObj.receiver]) io.to(online_users[msgObj.receiver].sid).emit('private_message_deleted', deletePayload);
+    if (online_users[msgObj.sender]) io.to(online_users[msgObj.sender].sid).emit('private_message_deleted', deletePayload);
   });
 
   socket.on('send_guild_message', async (data) => {

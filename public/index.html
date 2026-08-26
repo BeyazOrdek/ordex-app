@@ -91,26 +91,34 @@
             </button>
         </div>
 
-        <!-- 2. İKİNCİ SOL BAR (DM / ARKADAŞLAR / GRUPLAR / SUNUCULAR BARI) (240px) -->
+        <!-- 2. İKİNCİ SOL BAR (DM / ARKADAŞLAR / GRUPLAR / SUNUCULAR BARI) -->
         <div id="discord-sidebar" class="discord-sidebar">
             <div style="flex: 1; overflow-y: auto; display: flex; flex-direction: column;">
                 <!-- DM / ARKADAŞLAR İÇERİĞİ -->
                 <div id="dm-sidebar-content">
-                    <div class="sidebar-header">
+                    <div class="sidebar-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3 class="glow-purple">DİREKT MESAJLAR</h3>
+                        <button id="toggle-left-sidebar-btn" class="icon-btn small" data-tooltip="Sol Paneli Gizle">◀</button>
                     </div>
                     <!-- Arkadaş & Grup Sekmeleri -->
                     <div class="friends-nav-tabs">
                         <button id="tab-friends-all" class="friends-tab active">Tümü</button>
                         <button id="tab-friends-online" class="friends-tab">Çevrimiçi</button>
+                        <button id="tab-friends-pending" class="friends-tab">Bekleyen <span id="pending-badge" class="unread-badge hidden">0</span></button>
                         <button id="tab-groups-list" class="friends-tab">Gruplar</button>
                         <button id="tab-friends-add" class="friends-tab add-tab">+ Ekle</button>
                     </div>
 
+                    <!-- DM & Kullanıcı Arama Kısayolu -->
+                    <div class="user-search-box">
+                        <input type="text" id="user-search-input" placeholder="🔍 DM veya Kullanıcı ara..." autocomplete="off">
+                        <div id="user-search-results" class="user-search-results hidden"></div>
+                    </div>
+
                     <!-- Arkadaş Ekleme Kutusu -->
                     <div id="add-friend-container" class="add-friend-box hidden">
-                        <input type="text" id="add-friend-input" placeholder="Kullanıcı adı..." autocomplete="off">
-                        <button id="add-friend-btn" class="cyber-btn small">+</button>
+                        <input type="text" id="add-friend-input" placeholder="Kullanıcı adı (@kullanici)..." autocomplete="off">
+                        <button id="add-friend-btn" class="cyber-btn small">İstek Gönder</button>
                     </div>
 
                     <!-- Grup Kur Butonu -->
@@ -138,7 +146,7 @@
                     <span class="voice-conn-status">Sese Bağlandı</span>
                     <span class="voice-conn-channel glow-green" id="voice-conn-channel-name">genel-ses</span>
                 </div>
-                <button id="disconnect-voice-btn" class="icon-btn disconnect-btn" title="Bağlantıyı Kes">📞</button>
+                <button id="disconnect-voice-btn" class="icon-btn disconnect-btn" data-tooltip="Bağlantıyı Kes">📞</button>
             </div>
 
             <!-- HIZLI HESAP DEĞİŞTİRME MENÜSÜ (ACCOUNT SWITCHER POPOVER) -->
@@ -170,77 +178,39 @@
                     <span id="my-username-tag" class="user-username-tag">@kullanici</span>
                 </div>
                 <div class="user-actions">
-                    <button id="profile-mic-btn" class="icon-btn mic-on" title="Sesi Aç/Kapat">🎙️</button>
-                    <button id="profile-deafen-btn" class="icon-btn deafen-off" title="Kulaklığı Kapat">🎧</button>
-                    <button id="open-profile-btn" class="icon-btn" title="Ayarlar">⚙️</button>
+                    <button id="profile-mic-btn" class="icon-btn mic-on" data-tooltip="Sesi Aç/Kapat">🎙️</button>
+                    <button id="notification-bell-btn" class="icon-btn" data-tooltip="Bildirim Merkezi">🔔 <span id="notification-unread-badge" class="unread-badge hidden">0</span></button>
+                    <button id="open-profile-modal-btn" class="icon-btn" data-tooltip="Profil Ayarları">⚙️</button>
                 </div>
             </div>
         </div>
 
-        <!-- 3. ANA İÇERİK ALANI -->
-        <div class="resizer" id="resizer-left"></div>
-        <div id="main-content" class="main-content">
+        <!-- SOL RESIZER HANDLE -->
+        <div class="resizer-handle" id="resizer-left"></div>
 
-            <!-- A. DM / ARKADAŞLAR ANA GÖRÜNÜMÜ -->
+        <!-- 3. ANA İÇERİK ALANI (CONTENT AREA) -->
+        <div class="main-content">
+            
+            <!-- A. DİREKT MESAJ (DM) SOHBET VE DAHİLİ PANEL GÖRÜNÜMÜ -->
             <div id="friends-view" class="content-view">
                 
-                <!-- DM SEÇİLİ DEĞİLKEN: ARKADAŞLAR LİSTESİ DASHBOARD -->
-                <div id="friends-dashboard" class="friends-dashboard">
-                    <!-- ORDEX DESKTOP BANNER -->
-                    <div class="desktop-dashboard-banner cyberpunk-box">
-                        <div class="banner-left">
-                            <span class="banner-icon">💻</span>
-                            <div class="banner-info">
-                                <h3 class="glow-cyan">Ordex'i Masaüstünde Kullan</h3>
-                                <p>Ordex'i Windows uygulaması olarak kullan.</p>
-                            </div>
-                        </div>
-                        <div class="banner-right">
-                            <a href="https://github.com/BeyazOrdek/ordex-app/releases/download/v1.0.0/Ordex.Setup.1.0.0.exe" class="cyber-btn download-btn small-btn">
-                                <span>🪟</span> Windows için İndir
-                            </a>
-                            <span class="desktop-subtext">Windows 10/11 • Ücretsiz</span>
-                            <p class="mobile-notice-text">Ordex Desktop şu anda Windows için kullanılabilir.</p>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-header">
-                        <h2>👥 Arkadaşlar</h2>
-                        <span id="friends-count-badge" class="count-badge">0 Arkadaş</span>
-                    </div>
-                    <div id="friends-cards-grid" class="friends-cards-grid">
-                        <!-- Kartlar eklenecek -->
-                    </div>
-                </div>
-
-                <!-- DM SEÇİLİYKEN: DISCORD DM CHAT & EMBEDDED CALL & SAĞ ÜYE PANELİ -->
+                <!-- DİREKT MESAJ SOHBET ALANI -->
                 <div id="dm-chat-container" class="dm-chat-container hidden">
                     
-                    <!-- EMBEDDED DISCORD CALL BARI -->
-                    <div id="embedded-dm-call" class="embedded-dm-call compact hidden" style="background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative;">
-                        <!-- Görüşme Avatarları / Video Grid -->
-                        <div id="embedded-call-video-grid" class="embedded-call-video-grid" style="display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 20px; width: 100%; height: 100%; min-height: 200px;">
-                            
-                            <div class="call-avatar-card local" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #1a1a1a; border-radius: 12px; overflow: hidden; box-shadow: 0 0 20px rgba(0, 240, 255, 0.2);">
-                                <div id="call-local-avatar" class="user-avatar" style="width: 100px; height: 100px; font-size: 3rem; margin-bottom: 10px; box-shadow: 0 0 15px var(--neon-cyan);">🎮</div>
-                                <span class="call-avatar-name" style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">Sen</span>
-                                <video id="local-dm-video" autoplay playsinline muted class="call-video-element" style="position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; opacity: 0;"></video>
-                            </div>
-
-                            <div class="call-avatar-card remote" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #1a1a1a; border-radius: 12px; overflow: hidden; box-shadow: 0 0 20px rgba(138, 43, 226, 0.2);">
-                                <div id="call-remote-avatar" class="user-avatar" style="width: 100px; height: 100px; font-size: 3rem; margin-bottom: 10px; box-shadow: 0 0 15px var(--neon-purple);">🎮</div>
-                                <span id="call-remote-name" class="call-avatar-name" style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">Arkadaş</span>
-                                <video id="remote-dm-video" autoplay playsinline class="call-video-element" style="position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; opacity: 0;"></video>
-                                <audio id="remote-dm-audio" autoplay></audio>
-                            </div>
+                    <!-- EMBEDDED VOIP SESLİ/GÖRÜNTÜLÜ ÇAĞRI BARI -->
+                    <div id="embedded-call-bar" class="embedded-call-bar hidden">
+                        <div class="call-info">
+                            <span class="call-status-badge glow-green">● CANLI SOHBET</span>
+                            <span id="embed-call-target-name" class="call-target-name">Kullanıcı</span>
                         </div>
+                        
+                        <div id="embedded-video-grid" class="embedded-video-grid"></div>
 
-                        <!-- Discord Standard Bottom Controls -->
-                        <div class="embedded-call-bottom-controls" style="display: flex; gap: 15px; padding: 15px; background: rgba(0,0,0,0.5); border-radius: 20px; position: absolute; bottom: 15px; backdrop-filter: blur(5px);">
-                            <button id="embed-toggle-cam-btn" class="call-action-btn cam-on" title="Kamera" style="width: 48px; height: 48px; border-radius: 50%; background: #2f3136; border: none; font-size: 1.2rem; cursor: pointer; transition: 0.2s;">📹</button>
-                            <button id="embed-toggle-mic-btn" class="call-action-btn mic-on" title="Mikrofon" style="width: 48px; height: 48px; border-radius: 50%; background: #2f3136; border: none; font-size: 1.2rem; cursor: pointer; transition: 0.2s;">🎙️</button>
-                            <button id="embed-share-screen-btn" class="call-action-btn" title="Ekran Paylaş" style="width: 48px; height: 48px; border-radius: 50%; background: #2f3136; border: none; font-size: 1.2rem; cursor: pointer; transition: 0.2s;">🖥️</button>
-                            <button id="embed-end-call-btn" class="call-action-btn end-call" title="Aramayı Kapat" style="width: 48px; height: 48px; border-radius: 50%; background: #ed4245; color: white; border: none; font-size: 1.2rem; cursor: pointer; transition: 0.2s; box-shadow: 0 0 10px rgba(237,66,69,0.5);">📵</button>
+                        <div class="embedded-call-controls">
+                            <button id="embed-mic-btn" class="call-action-btn mic-on" data-tooltip="Mikrofonu Aç/Kapat">🎙️</button>
+                            <button id="embed-cam-btn" class="call-action-btn cam-off" data-tooltip="Kamerayı Aç/Kapat">📹</button>
+                            <button id="embed-screen-btn" class="call-action-btn screen-off" data-tooltip="Ekran Paylaş">🖥️</button>
+                            <button id="embed-end-call-btn" class="call-action-btn end-call" data-tooltip="Aramayı Kapat">📵</button>
                         </div>
                     </div>
 
@@ -255,13 +225,13 @@
                             </div>
                         </div>
                         <div class="dm-header-actions">
-                            <button id="start-voice-call-btn" class="call-btn voice-call" title="Sesli Arama Başlat">
+                            <button id="start-voice-call-btn" class="call-btn voice-call" data-tooltip="Sesli Arama Başlat">
                                 📞 Sesli Arama
                             </button>
-                            <button id="start-video-call-btn" class="call-btn video-call" title="Görüntülü Arama Başlat">
+                            <button id="start-video-call-btn" class="call-btn video-call" data-tooltip="Görüntülü Arama Başlat">
                                 📹 Görüntülü Arama
                             </button>
-                            <button id="toggle-right-sidebar-btn" class="call-btn member-toggle" title="Üyeler Paneli">
+                            <button id="toggle-right-sidebar-btn" class="call-btn member-toggle" data-tooltip="Üyeler Paneli">
                                 👥 Üyeler
                             </button>
                         </div>
@@ -278,10 +248,24 @@
 
                             <div class="dm-messages" id="pm-messages-container"></div>
                             
+                            <!-- TYPING INDICATOR -->
+                            <div id="typing-indicator" class="typing-indicator hidden">
+                                <span id="typing-text">Kullanıcı yazıyor...</span>
+                            </div>
+
+                            <!-- REPLY PREVIEW BAR -->
+                            <div id="reply-preview-bar" class="reply-preview-bar hidden">
+                                <div class="reply-info">
+                                    <span>Yanıtlanıyor: <strong id="reply-target-name">Kullanıcı</strong></span>
+                                    <span id="reply-target-text" class="reply-snippet">Mesaj metni...</span>
+                                </div>
+                                <button id="cancel-reply-btn" class="icon-btn small">✕</button>
+                            </div>
+
                             <div class="dm-input-area">
                                 <input type="file" id="chat-file-input" accept="image/*" class="hidden">
-                                <button id="attach-file-btn" class="chat-action-icon" title="Fotoğraf Gönder">📷</button>
-                                <button id="open-gif-btn" class="chat-action-icon" title="GIF Gönder">👾</button>
+                                <button id="attach-file-btn" class="chat-action-icon" data-tooltip="Fotoğraf Gönder">📷</button>
+                                <button id="open-gif-btn" class="chat-action-icon" data-tooltip="GIF Gönder">👾</button>
                                 <input type="text" id="pm-input" placeholder="Mesaj veya fotoğraf gönder..." autocomplete="off">
                                 <button id="pm-send-btn" class="cyber-btn small">Gönder</button>
                             </div>
@@ -309,14 +293,14 @@
                     <div class="video-header cyberpunk-box">
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <img src="/logo.png" alt="Ördex" class="nav-logo glow-img" onerror="this.style.display='none'">
-                            <h2 class="logo-small glow-blue">ÖRDEX</h2>
+                            <h2 class="logo-small glow-blue">ÖRDEX ODA</h2>
                         </div>
                         <div class="room-info-group">
                             <div class="room-info">
                                 Oda: <span id="current-room" class="highlight-cyan"></span> 
                                 <span id="role-badge" class="badge">İzleyici</span>
                             </div>
-                            <button id="leave-room-btn" class="leave-btn">🚪 Odadan Çık</button>
+                            <button id="leave-room-btn" class="leave-btn" data-tooltip="Odadan Çık">🚪 Odadan Çık</button>
                         </div>
                     </div>
                     
@@ -366,39 +350,45 @@
                     
                     <div id="screen-share-ui" class="video-wrapper cyberpunk-box hidden">
                         <div style="width: 100%; text-align: center; color: #666; margin-top: 20px;" id="no-screen-msg">
-                            Şu an ekran paylaşan yok. Aşağıdaki butondan yayına başlayabilirsin. (Ekranlara tıklayarak büyütebilirsin!)
+                            Şu an ekran paylaşan yok. Aşağıdaki butondan yayına başlayabilirsin!
                         </div>
                     </div>
 
-                    <!-- MEDYA PLAYER KONTROL PANELİ (Play/Pause, Seek, Volume, Mute) -->
+                    <!-- BÜTÜNLEŞİK MEDYA KONTROL PANLEİ -->
                     <div id="media-player-controls" class="media-controls-panel cyberpunk-box">
-                        <button id="media-play-pause-btn" class="cyber-btn small media-play-btn" title="Oynat / Duraklat">▶</button>
+                        <button id="media-play-pause-btn" class="cyber-btn small media-play-btn" data-tooltip="Oynat / Duraklat">▶</button>
                         
                         <div class="media-seek-wrap">
                             <span id="media-time-current" class="media-time-text">00:00</span>
-                            <input type="range" id="media-seek-bar" class="media-seek-slider" min="0" max="100" value="0" step="0.1" title="Süre Sarma">
+                            <input type="range" id="media-seek-bar" class="media-seek-slider" min="0" max="100" value="0" step="0.1" data-tooltip="Süre Sarma">
                             <span id="media-time-total" class="media-time-text">00:00</span>
                         </div>
                         
                         <div class="media-volume-wrap">
-                            <button id="media-mute-btn" class="icon-btn media-mute-btn" title="Sesi Kapa/Aç">🔊</button>
-                            <input type="range" id="media-volume-bar" class="media-volume-slider" min="0" max="100" value="100" title="Ses Seviyesi">
+                            <button id="media-mute-btn" class="icon-btn media-mute-btn" data-tooltip="Sesi Kapa/Aç">🔊</button>
+                            <input type="range" id="media-volume-bar" class="media-volume-slider" min="0" max="100" value="100" data-tooltip="Ses Seviyesi">
                         </div>
+
+                        <div class="media-url-wrap">
+                            <input type="text" id="video-url" placeholder="YouTube / MP4 Bağlantısı..." autocomplete="off">
+                            <button id="load-video-btn" class="cyber-btn small" data-tooltip="Sıraya Ekle">➕ Yükle</button>
+                        </div>
+
+                        <button id="fullscreen-btn" class="icon-btn" data-tooltip="Tam Ekran">🔲</button>
                     </div>
 
-                    <div id="video-controls-bar" class="video-controls cyberpunk-box">
-                        <input type="text" id="video-url" placeholder="Video Linki Girin (YouTube, .mp4 vb.)" autocomplete="off">
-                        <button id="load-video-btn" class="cyber-btn">Sıraya Ekle / Yükle</button>
-                        <button id="fullscreen-btn" class="icon-btn" title="Tam Ekran" style="font-size: 1.2rem; padding: 0 10px;">🔲</button>
-                    </div>
+                    <!-- Gizli Uyumlu Video Controls bar -->
+                    <div id="video-controls-bar" class="hidden"></div>
                 </div>
                 
-                <div class="resizer" id="resizer-right"></div>
+                <!-- SAĞ RESIZER HANDLE -->
+                <div class="resizer-handle" id="resizer-right"></div>
+
                 <div class="right-panel" id="room-right-panel">
                     <div id="queue-section-box" class="queue-section cyberpunk-box">
                         <div class="queue-header">
-                            <h3 class="glow-green">Video İstek Listesi</h3>
-                            <button id="next-video-btn" class="cyber-btn small hidden">Sonraki Video ➔</button>
+                            <h3 class="glow-green">İstek Listesi</h3>
+                            <button id="next-video-btn" class="cyber-btn small hidden" data-tooltip="Sonraki Video">Sonraki ➔</button>
                         </div>
                         <div class="queue-list" id="queue-list-container"></div>
                     </div>
@@ -407,8 +397,8 @@
                         <div class="voice-header">
                             <h3 class="glow-cyan">Sesli Kanal (WebRTC)</h3>
                             <div style="display: flex; gap: 5px;">
-                                <button id="share-screen-btn" class="cyber-btn small hidden">Ekran Paylaş</button>
-                                <button id="mic-toggle-btn" class="cyber-btn small mic-off">Sesi Aç</button>
+                                <button id="share-screen-btn" class="cyber-btn small hidden" data-tooltip="Ekran Paylaş">Ekran Paylaş</button>
+                                <button id="mic-toggle-btn" class="cyber-btn small mic-off" data-tooltip="Sesi Aç/Kapat">Sesi Aç</button>
                             </div>
                         </div>
                         <div class="voice-users" id="voice-users-list"></div>
@@ -417,6 +407,7 @@
                     <div class="chat-section cyberpunk-box" id="room-chat-section">
                         <div class="chat-header" style="display: flex; justify-content: space-between; align-items: center;">
                             <h3 class="glow-purple">Oda Sohbeti</h3>
+                            <button id="toggle-room-right-panel-btn" class="icon-btn small" data-tooltip="Sağ Paneli Gizle">▶</button>
                         </div>
                         <div class="chat-messages" id="chat-messages"></div>
                         <div class="chat-input-area">
@@ -742,6 +733,41 @@
             </div>
         </div>
     </div>
+
+    <!-- 6. KULLANICI PROFİL POPOUT MODALI -->
+    <div id="user-profile-modal" class="modal-overlay hidden">
+        <div class="cyberpunk-modal-box user-profile-card">
+            <div class="profile-card-banner" id="popout-banner"></div>
+            <button class="close-profile-popout" id="close-user-profile-btn">✕</button>
+            <div class="profile-popout-body">
+                <div class="user-avatar large" id="popout-avatar">🎮</div>
+                <h3 id="popout-displayname" class="glow-cyan">Kullanıcı</h3>
+                <span id="popout-username" class="user-username-tag">@kullanici</span>
+                <div id="popout-status" class="user-status-text">• Çevrimiçi</div>
+                <div id="popout-badges" class="profile-badges-row"></div>
+                <p id="popout-about" class="profile-about-text"></p>
+                <div class="profile-actions-row">
+                    <button id="popout-dm-btn" class="cyber-btn small">💬 Mesaj Gönder</button>
+                    <button id="popout-friend-btn" class="cyber-btn small">👤 Arkadaş Ekle</button>
+                    <button id="popout-block-btn" class="cyber-btn small cancel">🚫 Engelle</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 7. KALICI BİLDİRİM MERKEZİ DRAWER -->
+    <div id="notification-drawer" class="notification-drawer hidden">
+        <div class="drawer-header">
+            <span>🔔 Bildirim Merkezi</span>
+            <button id="close-notifications-btn" class="icon-btn small">✕</button>
+        </div>
+        <div id="notification-list" class="notification-list">
+            <div style="color:#666; font-size:0.8rem; text-align:center; padding:15px;">Henüz bildiriminiz yok.</div>
+        </div>
+    </div>
+
+    <!-- CYBERPUNK TOAST BİLDİRİM KUTUSU -->
+    <div id="toast-container" class="toast-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>

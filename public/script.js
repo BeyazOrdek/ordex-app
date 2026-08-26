@@ -1856,21 +1856,50 @@ if (shareScreenBtn) {
     shareScreenBtn.addEventListener('click', async () => {
         if (!isScreenSharing) {
             try {
-                localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-                isScreenSharing = true;
-                shareScreenBtn.textContent = '⏹ Yayını Durdur';
-                shareScreenBtn.classList.add('cancel');
-                renderScreenShare(socket.id, `${myDisplayName} (Sen)`, localScreenStream);
-                
-                Object.values(peers).forEach(pc => {
-                    localScreenStream.getTracks().forEach(track => pc.addTrack(track, localScreenStream));
-                });
-                
-                localScreenStream.getVideoTracks()[0].onended = () => {
-                    stopScreenShare();
-                };
+                if (isElectronApp()) {
+                    if (window.electronAPI && typeof window.electronAPI.getDisplayMedia === 'function') {
+                        localScreenStream = await window.electronAPI.getDisplayMedia();
+                    } else if (window.electronAPI && typeof window.electronAPI.getDesktopSources === 'function') {
+                        const sources = await window.electronAPI.getDesktopSources({ types: ['screen', 'window'] });
+                        if (sources && sources.length > 0) {
+                            localScreenStream = await navigator.mediaDevices.getUserMedia({
+                                audio: false,
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: sources[0].id
+                                    }
+                                }
+                            });
+                        } else {
+                            localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                        }
+                    } else {
+                        localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                    }
+                } else {
+                    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                }
+
+                if (localScreenStream) {
+                    isScreenSharing = true;
+                    shareScreenBtn.textContent = '⏹ Yayını Durdur';
+                    shareScreenBtn.classList.add('cancel');
+                    renderScreenShare(socket.id, `${myDisplayName} (Sen)`, localScreenStream);
+                    
+                    Object.values(peers).forEach(pc => {
+                        localScreenStream.getTracks().forEach(track => pc.addTrack(track, localScreenStream));
+                    });
+                    
+                    if (localScreenStream.getVideoTracks()[0]) {
+                        localScreenStream.getVideoTracks()[0].onended = () => {
+                            stopScreenShare();
+                        };
+                    }
+                }
             } catch (err) {
                 console.error('Ekran paylaşımı hatası:', err);
+                showToast('Ekran paylaşımı başlatılamadı.', 'error');
             }
         } else {
             stopScreenShare();
@@ -1932,47 +1961,291 @@ if (fullscreenBtn) {
 // ARKADAŞLIK, DİREKT MESAJ (DM) VE GRUP YÖNETİMİ
 // =========================================================================
 
-tabFriendsAll.addEventListener('click', () => setFriendsFilter('all'));
-tabFriendsOnline.addEventListener('click', () => setFriendsFilter('online'));
-tabGroupsList.addEventListener('click', () => setFriendsFilter('groups'));
-tabFriendsAdd.addEventListener('click', () => setFriendsFilter('add'));
+// --- CYBERPUNK TOAST BİLDİRİM SİSTEMİ ---
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast-message ${type}`;
+    toast.innerHTML = `
+        <span>${message}</span>
+        <span style="cursor:pointer; font-weight:bold; margin-left:8px;" onclick="this.parentElement.remove()">✕</span>
+    `;
+    container.appendChild(toast);
+    setTimeout(() => {
+        if (toast && toast.parentElement) toast.remove();
+    }, 4000);
+}
+
+const tabFriendsPending = document.getElementById('tab-friends-pending');
+const pendingBadge = document.getElementById('pending-badge');
+const userSearchInput = document.getElementById('user-search-input');
+const userSearchResults = document.getElementById('user-search-results');
+
+if (tabFriendsAll) tabFriendsAll.addEventListener('click', () => setFriendsFilter('all'));
+if (tabFriendsOnline) tabFriendsOnline.addEventListener('click', () => setFriendsFilter('online'));
+if (tabFriendsPending) tabFriendsPending.addEventListener('click', () => setFriendsFilter('pending'));
+if (tabGroupsList) tabGroupsList.addEventListener('click', () => setFriendsFilter('groups'));
+if (tabFriendsAdd) tabFriendsAdd.addEventListener('click', () => setFriendsFilter('add'));
 
 function setFriendsFilter(filter) {
     friendsFilter = filter;
-    tabFriendsAll.classList.remove('active');
-    tabFriendsOnline.classList.remove('active');
-    tabGroupsList.classList.remove('active');
-    tabFriendsAdd.classList.remove('active');
+    if (tabFriendsAll) tabFriendsAll.classList.remove('active');
+    if (tabFriendsOnline) tabFriendsOnline.classList.remove('active');
+    if (tabFriendsPending) tabFriendsPending.classList.remove('active');
+    if (tabGroupsList) tabGroupsList.classList.remove('active');
+    if (tabFriendsAdd) tabFriendsAdd.classList.remove('active');
     
-    if (filter === 'all') tabFriendsAll.classList.add('active');
-    else if (filter === 'online') tabFriendsOnline.classList.add('active');
-    else if (filter === 'groups') tabGroupsList.classList.add('active');
-    else if (filter === 'add') tabFriendsAdd.classList.add('active');
+    if (filter === 'all' && tabFriendsAll) tabFriendsAll.classList.add('active');
+    else if (filter === 'online' && tabFriendsOnline) tabFriendsOnline.classList.add('active');
+    else if (filter === 'pending' && tabFriendsPending) tabFriendsPending.classList.add('active');
+    else if (filter === 'groups' && tabGroupsList) tabGroupsList.classList.add('active');
+    else if (filter === 'add' && tabFriendsAdd) tabFriendsAdd.classList.add('active');
 
     addFriendContainer.classList.toggle('hidden', filter !== 'add');
     groupActionsBar.classList.toggle('hidden', filter !== 'groups');
 
     if (filter === 'groups') renderGroupsList(activeGroupsList);
+    else if (filter === 'pending') renderPendingRequestsList();
     else renderFriendsList(activeFriendsList);
 }
 
-addFriendBtn.addEventListener('click', async () => {
-    const friendName = addFriendInput.value.trim();
+// --- KULLANICI ARAMA SİSTEMİ (DEBOUNCED SEARCH) ---
+let searchDebounceTimer = null;
+if (userSearchInput && userSearchResults) {
+    userSearchInput.addEventListener('input', (e) => {
+        clearTimeout(searchDebounceTimer);
+        const query = e.target.value.trim();
+        if (!query) {
+            userSearchResults.classList.add('hidden');
+            userSearchResults.innerHTML = '';
+            return;
+        }
+        searchDebounceTimer = setTimeout(() => {
+            searchUsers(query);
+        }, 300);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!userSearchInput.contains(e.target) && !userSearchResults.contains(e.target)) {
+            userSearchResults.classList.add('hidden');
+        }
+    });
+}
+
+async function searchUsers(query) {
+    if (!myUsername) return;
+    try {
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}&username=${encodeURIComponent(myUsername)}`);
+        const data = await res.json();
+        userSearchResults.innerHTML = '';
+        if (data.success && data.results && data.results.length > 0) {
+            userSearchResults.classList.remove('hidden');
+            data.results.forEach(u => {
+                const div = document.createElement('div');
+                div.className = 'search-result-item';
+                let btnHtml = '';
+                if (u.isFriend) {
+                    btnHtml = '<span style="font-size:0.75rem; color:var(--neon-green);">Arkadaş</span>';
+                } else if (u.hasPendingReq) {
+                    btnHtml = '<span style="font-size:0.75rem; color:var(--neon-cyan);">İstek Bekliyor</span>';
+                } else {
+                    btnHtml = `<button class="cyber-btn small" onclick="event.stopPropagation(); window.sendFriendRequest('${u.username}')">+ Ekle</button>`;
+                }
+
+                div.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div class="user-avatar small ${u.avatarFrame || 'none'}">${renderAvatar(u.avatar, u.avatarFrame)}</div>
+                        <div style="display:flex; flex-direction:column;">
+                            <span style="font-size:0.85rem; font-weight:bold;">${u.displayName}</span>
+                            <span style="font-size:0.7rem; color:var(--text-muted);">@${u.username}</span>
+                        </div>
+                    </div>
+                    <div>${btnHtml}</div>
+                `;
+
+                div.addEventListener('click', () => {
+                    userSearchResults.classList.add('hidden');
+                    userSearchInput.value = '';
+                    openPrivateChat({
+                        username: u.username,
+                        displayName: u.displayName,
+                        avatar: u.avatar,
+                        avatarFrame: u.avatarFrame,
+                        about: u.about,
+                        isOnline: u.isOnline
+                    });
+                });
+
+                userSearchResults.appendChild(div);
+            });
+        } else {
+            userSearchResults.classList.remove('hidden');
+            userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#888; text-align:center;">Kullanıcı bulunamadı.</div>';
+        }
+    } catch(e) { console.error(e); }
+}
+
+// --- ARKADAŞLIK İSTEĞİ FONKSİYONLARI ---
+async function sendFriendRequest(friendName) {
     if (!friendName) return;
     try {
-        const res = await fetch('/api/friends/add', {
+        const res = await fetch('/api/friends/request', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: myUsername, friendName })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
-            addFriendInput.value = '';
+            if (addFriendInput) addFriendInput.value = '';
             loadFriendsList();
+            loadFriendRequests();
         }
     } catch (e) { console.error(e); }
-});
+}
+window.sendFriendRequest = sendFriendRequest;
+
+if (addFriendBtn) {
+    addFriendBtn.addEventListener('click', () => {
+        const friendName = addFriendInput.value.trim();
+        if (friendName) sendFriendRequest(friendName);
+    });
+}
+
+async function acceptFriendRequest(requestId, friendName) {
+    try {
+        const res = await fetch('/api/friends/accept', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: myUsername, requestId, friendName })
+        });
+        const data = await res.json();
+        showToast(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            loadFriendsList();
+            loadFriendRequests();
+        }
+    } catch(e) { console.error(e); }
+}
+window.acceptFriendRequest = acceptFriendRequest;
+
+async function rejectFriendRequest(requestId, friendName) {
+    try {
+        const res = await fetch('/api/friends/reject', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: myUsername, requestId, friendName })
+        });
+        const data = await res.json();
+        showToast(data.message, 'info');
+        loadFriendRequests();
+    } catch(e) { console.error(e); }
+}
+window.rejectFriendRequest = rejectFriendRequest;
+
+async function removeFriend(friendName) {
+    if (!confirm(`'${friendName}' kullanıcısını arkadaşlarınızdan çıkarmak istiyor musunuz?`)) return;
+    try {
+        const res = await fetch('/api/friends/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: myUsername, friendName })
+        });
+        const data = await res.json();
+        showToast(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            loadFriendsList();
+        }
+    } catch(e) { console.error(e); }
+}
+window.removeFriend = removeFriend;
+
+let pendingRequestsData = { received: [], sent: [] };
+
+async function loadFriendRequests() {
+    if (!myUsername) return;
+    try {
+        const res = await fetch(`/api/friends/requests?username=${encodeURIComponent(myUsername)}`);
+        const data = await res.json();
+        if (data.success) {
+            pendingRequestsData = { received: data.received || [], sent: data.sent || [] };
+            if (pendingBadge) {
+                const count = pendingRequestsData.received.length;
+                pendingBadge.textContent = count;
+                pendingBadge.classList.toggle('hidden', count === 0);
+            }
+            if (friendsFilter === 'pending') {
+                renderPendingRequestsList();
+            }
+        }
+    } catch(e) { console.error(e); }
+}
+
+function renderPendingRequestsList() {
+    friendsListContainer.innerHTML = '';
+    friendsCardsGrid.innerHTML = '';
+
+    const total = pendingRequestsData.received.length + pendingRequestsData.sent.length;
+    friendsCountBadge.textContent = `${total} Bekleyen İstek`;
+
+    if (total === 0) {
+        friendsListContainer.innerHTML = '<div style="color:#666; font-size:0.8rem; text-align:center; padding:10px;">Bekleyen arkadaşlık isteği yok.</div>';
+        return;
+    }
+
+    if (pendingRequestsData.received.length > 0) {
+        const title = document.createElement('div');
+        title.className = 'channel-category-header';
+        title.innerHTML = '<span>GELEN İSTEKLER</span>';
+        friendsCardsGrid.appendChild(title);
+
+        pendingRequestsData.received.forEach(r => {
+            const card = document.createElement('div');
+            card.className = 'pending-request-card';
+            card.innerHTML = `
+                <div class="friend-info">
+                    <div class="user-avatar ${r.avatarFrame || 'none'}">${renderAvatar(r.avatar, r.avatarFrame)}</div>
+                    <div class="friend-names">
+                        <span class="friend-name">${r.displayName}</span>
+                        <span class="friend-tag">@${r.username}</span>
+                    </div>
+                </div>
+                <div class="request-actions">
+                    <button class="cyber-btn small" onclick="window.acceptFriendRequest('${r.id}', '${r.username}')">✓ Kabul Et</button>
+                    <button class="cyber-btn small cancel" onclick="window.rejectFriendRequest('${r.id}', '${r.username}')">✕ Reddet</button>
+                </div>
+            `;
+            friendsCardsGrid.appendChild(card);
+        });
+    }
+
+    if (pendingRequestsData.sent.length > 0) {
+        const title = document.createElement('div');
+        title.className = 'channel-category-header';
+        title.style.marginTop = '16px';
+        title.innerHTML = '<span>GÖNDERİLEN İSTEKLER</span>';
+        friendsCardsGrid.appendChild(title);
+
+        pendingRequestsData.sent.forEach(r => {
+            const card = document.createElement('div');
+            card.className = 'pending-request-card';
+            card.innerHTML = `
+                <div class="friend-info">
+                    <div class="user-avatar ${r.avatarFrame || 'none'}">${renderAvatar(r.avatar, r.avatarFrame)}</div>
+                    <div class="friend-names">
+                        <span class="friend-name">${r.displayName}</span>
+                        <span class="friend-tag">@${r.username} (İstek Bekliyor)</span>
+                    </div>
+                </div>
+                <div class="request-actions">
+                    <button class="cyber-btn small cancel" onclick="window.rejectFriendRequest('${r.id}', '${r.username}')">İptal Et</button>
+                </div>
+            `;
+            friendsCardsGrid.appendChild(card);
+        });
+    }
+}
 
 async function loadFriendsList() {
     if (!myUsername) return;
@@ -1981,8 +2254,9 @@ async function loadFriendsList() {
         const data = await res.json();
         if (data.success) {
             activeFriendsList = data.friends;
-            if (friendsFilter !== 'groups') renderFriendsList(activeFriendsList);
+            if (friendsFilter !== 'groups' && friendsFilter !== 'pending') renderFriendsList(activeFriendsList);
         }
+        loadFriendRequests();
     } catch (e) { console.error(e); }
 }
 
@@ -2032,7 +2306,10 @@ function renderFriendsList(friends) {
                     <span class="friend-tag">@${f.username}${f.customStatus ? ' - ' + f.customStatus : ''}</span>
                 </div>
             </div>
-            <button class="cyber-btn small">Mesaj Gönder</button>
+            <div style="display:flex; gap:6px;">
+                <button class="cyber-btn small">Mesaj Gönder</button>
+                <button class="cyber-btn small cancel" onclick="event.stopPropagation(); window.removeFriend('${f.username}')" title="Arkadaşlıktan Çıkar">🚫</button>
+            </div>
         `;
         card.querySelector('button').addEventListener('click', () => openPrivateChat(f));
         friendsCardsGrid.appendChild(card);
@@ -2085,7 +2362,7 @@ async function openPrivateChat(friendObj) {
 async function loadPrivateChatHistory(otherUser) {
     pmMessagesContainer.innerHTML = '<div style="color:#666; font-size:0.8rem; text-align:center;">Mesajlar yükleniyor...</div>';
     try {
-        const res = await fetch(`/api/pm/history?user1=${encodeURIComponent(myUsername)}&user2=${encodeURIComponent(otherUser)}`);
+        const res = await fetch(`/api/pm/history?user1=${encodeURIComponent(myUsername)}&user2=${encodeURIComponent(otherUser)}&requester=${encodeURIComponent(myUsername)}`);
         const data = await res.json();
         pmMessagesContainer.innerHTML = '';
         if (data.success && data.history) {
@@ -2093,14 +2370,59 @@ async function loadPrivateChatHistory(otherUser) {
                 appendPmMessage(msg.sender, msg.message, msg.time, msg.read);
             });
             socket.emit('mark_read', { sender: otherUser, receiver: myUsername });
+        } else if (data.message) {
+            showToast(data.message, 'error');
         }
     } catch (e) { console.error(e); }
 }
 
-function appendPmMessage(sender, message, time = new Date().toLocaleTimeString(), read = false) {
+let activeReplyTarget = null;
+const replyPreviewBar = document.getElementById('reply-preview-bar');
+const replyTargetName = document.getElementById('reply-target-name');
+const replyTargetText = document.getElementById('reply-target-text');
+const cancelReplyBtn = document.getElementById('cancel-reply-btn');
+const typingIndicator = document.getElementById('typing-indicator');
+const typingText = document.getElementById('typing-text');
+
+if (cancelReplyBtn) {
+    cancelReplyBtn.addEventListener('click', () => {
+        activeReplyTarget = null;
+        if (replyPreviewBar) replyPreviewBar.classList.add('hidden');
+    });
+}
+
+function setReplyTarget(msgId, sender, text) {
+    activeReplyTarget = { id: msgId, sender, text };
+    if (replyTargetName) replyTargetName.textContent = sender;
+    if (replyTargetText) replyTargetText.textContent = text;
+    if (replyPreviewBar) replyPreviewBar.classList.remove('hidden');
+    if (pmInput) pmInput.focus();
+}
+window.setReplyTarget = setReplyTarget;
+
+let typingEmitTimeout = null;
+if (pmInput) {
+    pmInput.addEventListener('input', () => {
+        if (!currentPmTarget) return;
+        socket.emit('typing_start', { sender: myUsername, receiver: currentPmTarget });
+        clearTimeout(typingEmitTimeout);
+        typingEmitTimeout = setTimeout(() => {
+            socket.emit('typing_stop', { sender: myUsername, receiver: currentPmTarget });
+        }, 2000);
+    });
+
+    pmInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendPrivateMessage();
+        }
+    });
+}
+
+function appendPmMessage(sender, message, time = new Date().toLocaleTimeString(), read = false, replyTo = null, edited = false, customId = null) {
     const isMe = sender === myUsername;
     const msgDiv = document.createElement('div');
-    const msgId = 'pm_' + Date.now() + Math.random().toString(36).substr(2, 4);
+    const msgId = customId || ('pm_' + Date.now() + Math.random().toString(36).substr(2, 4));
     msgDiv.className = `dm-message ${isMe ? 'my-pm' : 'other-pm'}`;
     msgDiv.id = msgId;
 
@@ -2109,11 +2431,29 @@ function appendPmMessage(sender, message, time = new Date().toLocaleTimeString()
         contentHtml = `<img src="${message}" class="chat-img-attachment" referrerPolicy="no-referrer" crossOrigin="anonymous">`;
     }
 
+    const replyHtml = replyTo ? `
+        <div class="reply-preview-snippet" style="font-size:0.75rem; color:var(--text-muted); border-left:2px solid var(--neon-cyan); padding-left:6px; margin-bottom:4px; cursor:pointer;" onclick="document.getElementById('${replyTo.id}')?.scrollIntoView({behavior:'smooth'})">
+            ↪ <strong>@${replyTo.sender}</strong>: ${replyTo.text.length > 30 ? replyTo.text.substr(0, 30) + '...' : replyTo.text}
+        </div>
+    ` : '';
+
+    const editedHtml = edited ? `<span class="edited-tag">(düzenlendi)</span>` : '';
     const readReceiptHtml = isMe ? `<div class="read-receipt">${read ? '✔️ Görüldü' : '✔️ İletildi'}</div>` : '';
 
+    const actionButtons = `
+        <div class="message-hover-actions">
+            <button class="msg-action-btn" onclick="window.setReplyTarget('${msgId}', '${sender}', '${message.replace(/'/g, "\\'")}')" title="Yanıtla">💬</button>
+            ${isMe ? `<button class="msg-action-btn" onclick="window.editPrivateMessage('${msgId}', '${message.replace(/'/g, "\\'")}')" title="Düzenle">✏️</button>` : ''}
+            ${isMe ? `<button class="msg-action-btn" onclick="window.deletePrivateMessage('${msgId}')" title="Sil">🗑️</button>` : ''}
+            <button class="msg-action-btn" onclick="navigator.clipboard.writeText('${message.replace(/'/g, "\\'")}'); showToast('Mesaj kopyalandı!', 'success')" title="Kopyala">📋</button>
+        </div>
+    `;
+
     msgDiv.innerHTML = `
-        <div class="dm-sender">${sender} <span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">${time}</span></div>
-        <div class="dm-text">${contentHtml}</div>
+        ${actionButtons}
+        ${replyHtml}
+        <div class="dm-sender" style="cursor:pointer;" onclick="window.openUserProfileModal('${sender}')">${sender} <span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">${time}</span></div>
+        <div class="dm-text" id="text-${msgId}">${contentHtml} ${editedHtml}</div>
         ${readReceiptHtml}
         <div class="msg-reactions" id="reactions-${msgId}" style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap;"></div>
         <div class="msg-reaction-btn" onclick="showEmojiPicker('${msgId}', '${currentPmTarget}')" title="Tepki Ekle">😀</div>
@@ -2123,31 +2463,60 @@ function appendPmMessage(sender, message, time = new Date().toLocaleTimeString()
     pmMessagesContainer.scrollTop = pmMessagesContainer.scrollHeight;
 }
 
-pmSendBtn.addEventListener('click', sendPrivateMessage);
-pmInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendPrivateMessage(); });
-
 function sendPrivateMessage() {
     const msg = pmInput.value.trim();
     if (!msg || !currentPmTarget) return;
 
-    appendPmMessage(myUsername, msg);
     socket.emit('send_private_message', {
         sender: myUsername,
         receiver: currentPmTarget,
-        message: msg
+        message: msg,
+        replyTo: activeReplyTarget
     });
+
+    if (activeReplyTarget) {
+        activeReplyTarget = null;
+        if (replyPreviewBar) replyPreviewBar.classList.add('hidden');
+    }
+
     pmInput.value = '';
     loadFriendsList();
 }
+
+function editPrivateMessage(msgId, oldText) {
+    const newText = prompt('Mesajı düzenle:', oldText);
+    if (newText !== null && newText.trim() !== '' && newText.trim() !== oldText) {
+        socket.emit('edit_private_message', {
+            msgId,
+            sender: myUsername,
+            newMessage: newText.trim()
+        });
+    }
+}
+window.editPrivateMessage = editPrivateMessage;
+
+function deletePrivateMessage(msgId) {
+    if (confirm('Bu mesajı silmek istediğinize emin misiniz?')) {
+        socket.emit('delete_private_message', {
+            msgId,
+            sender: myUsername
+        });
+    }
+}
+window.deletePrivateMessage = deletePrivateMessage;
 
 function sendImageOrGif(url) {
     if (currentPmTarget) {
         socket.emit('send_private_message', {
             sender: myUsername,
             receiver: currentPmTarget,
-            message: url
+            message: url,
+            replyTo: activeReplyTarget
         });
-        appendPmMessage(myUsername, url);
+        if (activeReplyTarget) {
+            activeReplyTarget = null;
+            if (replyPreviewBar) replyPreviewBar.classList.add('hidden');
+        }
         loadFriendsList();
     }
 }
@@ -2241,12 +2610,140 @@ if (gifSearchBtn) {
     });
 }
 
+// --- KULLANICI PROFİL POPOUT VE ENGELLEME MODALI ---
+async function openUserProfileModal(username) {
+    if (!username) return;
+    try {
+        const res = await fetch(`/api/profile/get?username=${encodeURIComponent(username)}`);
+        const data = await res.json();
+        if (data.success && data.profile) {
+            const u = data.profile;
+            const popoutModal = document.getElementById('user-profile-modal');
+            const popoutAvatar = document.getElementById('popout-avatar');
+            const popoutDisplayName = document.getElementById('popout-displayname');
+            const popoutUsername = document.getElementById('popout-username');
+            const popoutStatus = document.getElementById('popout-status');
+            const popoutBadges = document.getElementById('popout-badges');
+            const popoutAbout = document.getElementById('popout-about');
+            const popoutDmBtn = document.getElementById('popout-dm-btn');
+            const popoutFriendBtn = document.getElementById('popout-friend-btn');
+            const popoutBlockBtn = document.getElementById('popout-block-btn');
+
+            if (popoutAvatar) {
+                popoutAvatar.className = `user-avatar large ${u.avatar_frame || 'none'}`;
+                popoutAvatar.innerHTML = renderAvatar(u.avatar, u.avatar_frame);
+            }
+            if (popoutDisplayName) popoutDisplayName.textContent = u.display_name || u.username;
+            if (popoutUsername) popoutUsername.textContent = '@' + u.username;
+            if (popoutAbout) popoutAbout.textContent = u.about || '';
+            if (popoutBadges) {
+                popoutBadges.innerHTML = (u.badges || '🎮').split(',').map(b => `<span class="profile-badge-pill">${b}</span>`).join('');
+            }
+
+            if (popoutDmBtn) {
+                popoutDmBtn.onclick = () => {
+                    if (popoutModal) popoutModal.classList.add('hidden');
+                    openPrivateChat({
+                        username: u.username,
+                        displayName: u.display_name || u.username,
+                        avatar: u.avatar,
+                        avatarFrame: u.avatar_frame,
+                        about: u.about,
+                        isOnline: true
+                    });
+                };
+            }
+
+            if (popoutFriendBtn) {
+                popoutFriendBtn.onclick = () => {
+                    window.sendFriendRequest(u.username);
+                };
+            }
+
+            if (popoutBlockBtn) {
+                popoutBlockBtn.onclick = async () => {
+                    if (confirm(`'${u.username}' kullanıcısını engellemek istiyor musunuz?`)) {
+                        const bRes = await fetch('/api/users/block', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username: myUsername, targetUser: u.username })
+                        });
+                        const bData = await bRes.json();
+                        showToast(bData.message, bData.success ? 'success' : 'error');
+                        if (popoutModal) popoutModal.classList.add('hidden');
+                        loadFriendsList();
+                    }
+                };
+            }
+
+            if (popoutModal) popoutModal.classList.remove('hidden');
+        }
+    } catch(e) { console.error(e); }
+}
+window.openUserProfileModal = openUserProfileModal;
+
+const closeUserProfileBtn = document.getElementById('close-user-profile-btn');
+if (closeUserProfileBtn) {
+    closeUserProfileBtn.addEventListener('click', () => {
+        document.getElementById('user-profile-modal')?.classList.add('hidden');
+    });
+}
+
+// --- KALICI BİLDİRİM MERKEZİ ---
+let notificationsLog = [];
+function addNotification(title, text) {
+    notificationsLog.unshift({ id: Date.now(), title, text, time: new Date().toLocaleTimeString() });
+    const badge = document.getElementById('notification-unread-badge');
+    if (badge) {
+        badge.textContent = notificationsLog.length;
+        badge.classList.remove('hidden');
+    }
+    renderNotificationsList();
+}
+
+function renderNotificationsList() {
+    const listContainer = document.getElementById('notification-list');
+    if (!listContainer) return;
+    if (notificationsLog.length === 0) {
+        listContainer.innerHTML = '<div style="color:#666; font-size:0.8rem; text-align:center; padding:15px;">Henüz bildiriminiz yok.</div>';
+        return;
+    }
+    listContainer.innerHTML = '';
+    notificationsLog.forEach(n => {
+        const div = document.createElement('div');
+        div.className = 'notification-item';
+        div.innerHTML = `
+            <div style="font-weight:bold; font-size:0.85rem;">${n.title} <span style="font-size:0.7rem; color:#888; font-weight:normal; float:right;">${n.time}</span></div>
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">${n.text}</div>
+        `;
+        listContainer.appendChild(div);
+    });
+}
+
+const notifBellBtn = document.getElementById('notification-bell-btn');
+const notifDrawer = document.getElementById('notification-drawer');
+const closeNotifBtn = document.getElementById('close-notifications-btn');
+
+if (notifBellBtn && notifDrawer) {
+    notifBellBtn.addEventListener('click', () => {
+        notifDrawer.classList.toggle('hidden');
+        const badge = document.getElementById('notification-unread-badge');
+        if (badge) badge.classList.add('hidden');
+    });
+}
+if (closeNotifBtn && notifDrawer) {
+    closeNotifBtn.addEventListener('click', () => notifDrawer.classList.add('hidden'));
+}
+
 socket.on('receive_private_message', (data) => {
     const otherUser = data.sender === myUsername ? data.receiver : data.sender;
-    if (data.sender !== myUsername) playNotifSound('message');
+    if (data.sender !== myUsername) {
+        playNotifSound('message');
+        addNotification(`💬 @${data.sender} kullanıcısından mesaj`, data.message.length > 40 ? data.message.substring(0, 40) + '...' : data.message);
+    }
     
     if (currentPmTarget === otherUser && !dmChatContainer.classList.contains('hidden')) {
-        appendPmMessage(data.sender, data.message);
+        appendPmMessage(data.sender, data.message, data.time || new Date().toLocaleTimeString(), data.read, data.replyTo, data.edited, data.id);
         if (data.sender !== myUsername) {
             socket.emit('mark_read', { sender: data.sender, receiver: myUsername });
         }
@@ -2258,7 +2755,48 @@ socket.on('receive_private_message', (data) => {
     }
 });
 
-socket.on('friends_updated', () => { loadFriendsList(); });
+socket.on('user_typing_start', (data) => {
+    if (data.sender === currentPmTarget && typingIndicator) {
+        typingIndicator.classList.remove('hidden');
+        if (typingText) typingText.textContent = `@${data.sender} yazıyor...`;
+    }
+});
+
+socket.on('user_typing_stop', (data) => {
+    if (data.sender === currentPmTarget && typingIndicator) {
+        typingIndicator.classList.add('hidden');
+    }
+});
+
+socket.on('private_message_edited', (data) => {
+    const textElem = document.getElementById(`text-${data.msgId}`);
+    if (textElem) {
+        textElem.innerHTML = `${data.newMessage} <span class="edited-tag">(düzenlendi)</span>`;
+    }
+});
+
+socket.on('private_message_deleted', (data) => {
+    const msgElem = document.getElementById(data.msgId);
+    if (msgElem) {
+        msgElem.style.opacity = '0';
+        setTimeout(() => msgElem.remove(), 300);
+    }
+});
+
+socket.on('friends_updated', () => { 
+    loadFriendsList(); 
+    loadFriendRequests();
+});
+
+socket.on('friend_request_received', (data) => {
+    showToast(`${data.displayName || data.sender} size arkadaşlık isteği gönderdi!`, 'info');
+    loadFriendsList();
+    loadFriendRequests();
+});
+
+socket.on('error_message', (data) => {
+    showToast(data.message || 'Bir hata oluştu.', 'error');
+});
 
 // Grup Yönetimi
 if (openCreateGroupBtn) {
@@ -2925,6 +3463,101 @@ document.addEventListener('mouseup', () => {
         document.body.style.cursor = 'default';
     }
 });
+
+function initResizablePanels() {
+    const leftSidebar = document.getElementById('discord-sidebar');
+    const resizerLeft = document.getElementById('resizer-left');
+    const rightPanel = document.getElementById('room-right-panel');
+    const resizerRight = document.getElementById('resizer-right');
+
+    const savedLeftWidth = localStorage.getItem('ordex_left_sidebar_w');
+    const savedRightWidth = localStorage.getItem('ordex_right_sidebar_w');
+
+    if (savedLeftWidth && leftSidebar) {
+        leftSidebar.style.width = `${Math.max(200, Math.min(360, parseInt(savedLeftWidth)))}px`;
+    }
+    if (savedRightWidth && rightPanel) {
+        rightPanel.style.width = `${Math.max(280, Math.min(500, parseInt(savedRightWidth)))}px`;
+    }
+
+    if (resizerLeft && leftSidebar) {
+        let isDraggingLeft = false;
+        resizerLeft.addEventListener('mousedown', (e) => {
+            isDraggingLeft = true;
+            resizerLeft.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDraggingLeft) return;
+            const newWidth = Math.max(200, Math.min(360, e.clientX));
+            leftSidebar.style.width = `${newWidth}px`;
+            localStorage.setItem('ordex_left_sidebar_w', newWidth);
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDraggingLeft) {
+                isDraggingLeft = false;
+                resizerLeft.classList.remove('resizing');
+                document.body.style.cursor = 'default';
+                document.body.style.userSelect = 'auto';
+            }
+        });
+    }
+
+    if (resizerRight && rightPanel) {
+        let isDraggingRight = false;
+        resizerRight.addEventListener('mousedown', (e) => {
+            isDraggingRight = true;
+            resizerRight.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDraggingRight) return;
+            const newWidth = Math.max(280, Math.min(500, window.innerWidth - e.clientX));
+            rightPanel.style.width = `${newWidth}px`;
+            localStorage.setItem('ordex_right_sidebar_w', newWidth);
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDraggingRight) {
+                isDraggingRight = false;
+                resizerRight.classList.remove('resizing');
+                document.body.style.cursor = 'default';
+                document.body.style.userSelect = 'auto';
+            }
+        });
+    }
+
+    const toggleLeftBtn = document.getElementById('toggle-left-sidebar-btn');
+    if (toggleLeftBtn && leftSidebar) {
+        toggleLeftBtn.addEventListener('click', () => {
+            leftSidebar.classList.toggle('collapsed');
+            const isCollapsed = leftSidebar.classList.contains('collapsed');
+            toggleLeftBtn.textContent = isCollapsed ? '▶' : '◀';
+            toggleLeftBtn.setAttribute('data-tooltip', isCollapsed ? 'Sol Paneli Göster' : 'Sol Paneli Gizle');
+        });
+    }
+
+    const toggleRightBtn = document.getElementById('toggle-room-right-panel-btn');
+    if (toggleRightBtn && rightPanel) {
+        toggleRightBtn.addEventListener('click', () => {
+            rightPanel.classList.toggle('collapsed');
+            const isCollapsed = rightPanel.classList.contains('collapsed');
+            toggleRightBtn.textContent = isCollapsed ? '◀' : '▶';
+            toggleRightBtn.setAttribute('data-tooltip', isCollapsed ? 'Sağ Paneli Göster' : 'Sağ Paneli Gizle');
+        });
+    }
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initResizablePanels);
+} else {
+    initResizablePanels();
+}
 
 function unlockAudioAutoplay() {
     if (notifAudioCtx && notifAudioCtx.state === 'suspended') notifAudioCtx.resume().catch(() => {});
