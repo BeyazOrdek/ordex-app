@@ -261,26 +261,63 @@ app.get('/api/users/search', (req, res) => {
   const queryLower = q.trim().toLowerCase();
   const reqUsername = username ? username.trim().toLowerCase() : '';
 
-  const results = dbData.users
-    .filter(u => u.username.toLowerCase() !== reqUsername && (u.username.toLowerCase().includes(queryLower) || (u.display_name && u.display_name.toLowerCase().includes(queryLower))))
-    .slice(0, 15)
-    .map(u => {
-      const isFriend = dbData.friends.some(f => (f.user1.toLowerCase() === reqUsername && f.user2.toLowerCase() === u.username.toLowerCase()) || (f.user1.toLowerCase() === u.username.toLowerCase() && f.user2.toLowerCase() === reqUsername));
-      const pendingReq = dbData.friend_requests.find(r => r.status === 'pending' && ((r.sender.toLowerCase() === reqUsername && r.receiver.toLowerCase() === u.username.toLowerCase()) || (r.sender.toLowerCase() === u.username.toLowerCase() && r.receiver.toLowerCase() === reqUsername)));
-      const isOnline = !!online_users[u.username] && online_users[u.username].status !== 'invisible';
+  const allUsersMap = new Map();
 
-      return {
+  dbData.users.forEach(u => {
+    if (u && u.username) {
+      allUsersMap.set(u.username.toLowerCase(), {
         username: u.username,
         displayName: u.display_name || u.username,
         avatar: u.avatar || '🎮',
         avatarFrame: u.avatar_frame || 'none',
-        about: u.about || '',
+        about: u.about || ''
+      });
+    }
+  });
+
+  for (const uname in online_users) {
+    if (!allUsersMap.has(uname.toLowerCase())) {
+      const ou = online_users[uname];
+      allUsersMap.set(uname.toLowerCase(), {
+        username: uname,
+        displayName: ou.display_name || uname,
+        avatar: ou.avatar || '🎮',
+        avatarFrame: ou.frame || 'none',
+        about: 'Siberpunk platform sakini.'
+      });
+    }
+  }
+
+  const results = [];
+  for (const [unameLower, u] of allUsersMap.entries()) {
+    if (unameLower === reqUsername) continue;
+    if (unameLower.includes(queryLower) || u.displayName.toLowerCase().includes(queryLower)) {
+      const isFriend = dbData.friends.some(f => 
+        (f.user1.toLowerCase() === reqUsername && f.user2.toLowerCase() === unameLower) || 
+        (f.user1.toLowerCase() === unameLower && f.user2.toLowerCase() === reqUsername)
+      );
+      const pendingReq = dbData.friend_requests.find(r => 
+        r.status === 'pending' && (
+          (r.sender.toLowerCase() === reqUsername && r.receiver.toLowerCase() === unameLower) || 
+          (r.sender.toLowerCase() === unameLower && r.receiver.toLowerCase() === reqUsername)
+        )
+      );
+      const isOnline = !!online_users[u.username] && online_users[u.username].status !== 'invisible';
+
+      results.push({
+        username: u.username,
+        displayName: u.displayName,
+        avatar: u.avatar,
+        avatarFrame: u.avatarFrame,
+        about: u.about,
         isFriend,
         hasPendingReq: !!pendingReq,
         pendingSender: pendingReq ? pendingReq.sender : null,
         isOnline
-      };
-    });
+      });
+      if (results.length >= 15) break;
+    }
+  }
 
   res.json({ success: true, results });
 });
@@ -766,10 +803,27 @@ app.get('/api/gifs', async (req, res) => {
 
 // Socket.io
 io.on('connection', (socket) => {
-  socket.on('register_user', (data) => {
+  socket.on('register_user', async (data) => {
     const { username, display_name, avatar, avatar_frame, profile_banner, badges, is_admin, status, custom_status } = data;
     if (username) {
-      const userInDb = dbData.users.find(u => u.username === username);
+      let userInDb = dbData.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+      if (!userInDb) {
+        userInDb = {
+          id: Date.now(),
+          username: username,
+          password: '',
+          display_name: display_name ? display_name.trim() : username,
+          avatar: avatar || '🎮',
+          about: 'Siberpunk platform sakini.',
+          avatar_frame: avatar_frame || 'none',
+          profile_banner: profile_banner || 'linear-gradient(135deg, #00f0ff, #8a2be2)',
+          badges: badges || '🎮',
+          is_admin: is_admin || 0
+        };
+        dbData.users.push(userInDb);
+        await saveDb();
+      }
+
       const userStatus = status || (online_users[username]?.status) || 'online';
       const userCustomStatus = custom_status !== undefined ? custom_status : (userInDb?.custom_status || '');
 

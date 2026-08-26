@@ -1,5 +1,18 @@
 {
-  "users": [],
+  "users": [
+    {
+      "id": 1,
+      "username": "TestUserA",
+      "display_name": "Test User A",
+      "avatar": "🎮"
+    },
+    {
+      "id": 2,
+      "username": "TestUserB",
+      "display_name": "Test User B",
+      "avatar": "👾"
+    }
+  ],
   "friends": [],
   "friend_requests": [],
   "blocked_users": [],
