@@ -57,7 +57,36 @@ let active_rooms = {};
 let user_sessions = {};
 let online_users = {};
 
-// API Endpoints
+// API Endpoints & Ordex Desktop Direct Download
+app.get('/download-desktop', async (req, res) => {
+  const possiblePaths = [
+    path.join(__dirname, 'public', 'Downloads', 'Ordex Setup.exe'),
+    path.join(__dirname, 'public', 'Downloads', 'Ordex Setup 1.0.0.exe'),
+    path.join(__dirname, 'public', 'downloads', 'Ordex Setup.exe'),
+    path.join(__dirname, 'public', 'downloads', 'Ordex Setup 1.0.0.exe'),
+    path.join(__dirname, 'public', 'Ordex Setup.exe'),
+    path.join(__dirname, 'public', 'Ordex Setup 1.0.0.exe')
+  ];
+
+  for (const filePath of possiblePaths) {
+    try {
+      await fs.access(filePath);
+      return res.download(filePath, 'Ordex Setup.exe', (err) => {
+        if (err && !res.headersSent) {
+          res.status(500).send('İndirme sırasında bir hata oluştu.');
+        }
+      });
+    } catch (e) {
+      // devam et
+    }
+  }
+
+  return res.status(404).send('Kurulum dosyası bulunamadı. Lütfen public/downloads/Ordex Setup.exe dosyasının varlığından emin olun.');
+});
+
+app.get(['/downloads/Ordex%20Setup.exe', '/downloads/Ordex Setup.exe', '/Downloads/Ordex%20Setup.exe', '/Downloads/Ordex Setup.exe'], (req, res) => {
+  res.redirect('/download-desktop');
+});
 
 app.post('/api/register', async (req, res) => {
   const { username, password, display_name, avatar, about, avatar_frame, profile_banner, badges } = req.body;
