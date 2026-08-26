@@ -1,0 +1,14 @@
+{
+  "users": [],
+  "friends": [],
+  "friend_requests": [],
+  "blocked_users": [],
+  "private_messages": [],
+  "groups": [],
+  "group_members": [],
+  "group_messages": [],
+  "guilds": [],
+  "guild_members": [],
+  "guild_channels": [],
+  "guild_messages": []
+}

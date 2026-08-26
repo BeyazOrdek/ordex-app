@@ -1,0 +1,331 @@
+diff --git a/public/script.js b/public/script.js
+index 740f6cb..1171527 100644
+--- a/public/script.js
++++ b/public/script.js
+@@ -61,7 +61,7 @@ const myDisplayNameEl = document.getElementById('my-display-name');
+ const myUsernameTagEl = document.getElementById('my-username-tag');
+ const profileMicBtn = document.getElementById('profile-mic-btn');
+ const profileDeafenBtn = document.getElementById('profile-deafen-btn');
+-const openProfileBtn = document.getElementById('open-profile-btn');
++const openProfileBtn = document.getElementById('open-profile-modal-btn') || document.getElementById('open-profile-btn');
+ const myStatusIndicator = document.getElementById('my-status-indicator');
+ const statusSwitcherMenu = document.getElementById('status-switcher-menu');
+ 
+@@ -1435,6 +1435,12 @@ async function joinRoom(roomName, roomType = 'watch', createNew = false) {
+     roleBadge.textContent = isHost ? 'Yönetici' : 'İzleyici';
+     chatMessages.innerHTML = '';
+     
++    try {
++        await requestMicrophonePermission();
++    } catch(e) {
++        console.warn('Mikrofon izni hazırlığı uyarısı:', e);
++    }
++
+     socket.emit('join_room', {
+         username: myUsername,
+         room: roomName,
+@@ -1442,8 +1448,6 @@ async function joinRoom(roomName, roomType = 'watch', createNew = false) {
+         create_new: createNew,
+         avatar: myAvatar
+     });
+-    
+-    requestMicrophonePermission().catch(console.error);
+ }
+ 
+ function setupRoomUI(type) {
+@@ -1556,7 +1560,9 @@ socket.on('update_queue', (data) => {
+ async function requestMicrophonePermission() {
+     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+     try {
+-        localAudioStream = await getAudioStreamWithPermission({ audio: getAudioSettingsConstraints(), video: false });
++        if (!localAudioStream) {
++            localAudioStream = await getAudioStreamWithPermission({ audio: getAudioSettingsConstraints(), video: false });
++        }
+         
+         const isCurrentlyMuted = micToggleBtn ? micToggleBtn.textContent.includes('Aç') : false;
+         localAudioStream.getAudioTracks().forEach(t => t.enabled = !isCurrentlyMuted);
+@@ -1569,23 +1575,37 @@ async function requestMicrophonePermission() {
+             audioContext.resume().catch(() => {});
+         }
+ 
+-        const source = audioContext.createMediaStreamSource(localAudioStream);
+-        micGainNode = audioContext.createGain();
+-        source.connect(micGainNode);
+-
+         monitorAudio(localAudioStream, socket.id);
+ 
+-        Object.values(peers).forEach(pc => {
+-            localAudioStream.getTracks().forEach(track => {
+-                const senders = pc.getSenders();
+-                if (!senders.some(s => s.track && s.track.kind === track.kind)) {
+-                    pc.addTrack(track, localAudioStream);
++        for (const targetSid in peers) {
++            const pc = peers[targetSid];
++            if (pc) {
++                let trackAdded = false;
++                localAudioStream.getTracks().forEach(track => {
++                    const senders = pc.getSenders();
++                    if (!senders.some(s => s.track && s.track.kind === track.kind)) {
++                        pc.addTrack(track, localAudioStream);
++                        trackAdded = true;
++                    }
++                });
++
++                if (trackAdded && pc.signalingState === 'stable') {
++                    pc.createOffer()
++                        .then(offer => pc.setLocalDescription(offer))
++                        .then(() => {
++                            socket.emit('webrtc_offer', {
++                                target_sid: targetSid,
++                                sender_sid: socket.id,
++                                offer: pc.localDescription
++                            });
++                        })
++                        .catch(err => console.error('WebRTC renegotiation offer hatası:', err));
+                 }
+-            });
+-        });
++            }
++        }
+     } catch (e) {
+         console.error('Mikrofon erişim hatası:', e);
+-        addMessageToChat('Sistem', 'Sesli konuşma için mikrofon erişimi reddedildi veya cihaz bulunamadı.', 'system');
++        showToast('Sesli konuşma için mikrofon erişimi reddedildi veya cihaz bulunamadı.', 'error');
+     }
+ }
+ 
+@@ -1687,10 +1707,13 @@ function playRemoteAudioTrack(stream, targetSid) {
+     if (selectedAudioOutputDeviceId && typeof audioEl.setSinkId === 'function') {
+         audioEl.setSinkId(selectedAudioOutputDeviceId).catch(() => {});
+     }
+-    audioEl.play().catch(err => {
+-        console.log("Autoplay engellendi, kullanıcı etkileşimi bekleniyor:", err);
+-        pendingAudioElements.add(audioEl);
+-    });
++    const playPromise = audioEl.play();
++    if (playPromise !== undefined) {
++        playPromise.catch(err => {
++            console.warn("Autoplay engellendi, kullanıcı etkileşimi bekleniyor:", err);
++            pendingAudioElements.add(audioEl);
++        });
++    }
+ }
+ 
+ async function flushPendingCandidates(targetSid) {
+@@ -1710,7 +1733,7 @@ async function flushPendingCandidates(targetSid) {
+ }
+ 
+ function createPeerConnection(targetSid, isInitiator = false) {
+-    if (peers[targetSid]) {
++    if (peers[targetSid] && peers[targetSid].signalingState !== 'closed') {
+         try { peers[targetSid].close(); } catch(e) {}
+         delete peers[targetSid];
+     }
+@@ -1742,10 +1765,12 @@ function createPeerConnection(targetSid, isInitiator = false) {
+ 
+     pc.ontrack = (event) => {
+         if (event.track.kind === 'video') {
+-            renderScreenShare(targetSid, 'Yayın', event.streams[0]);
++            const vStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
++            renderScreenShare(targetSid, 'Yayın', vStream);
+         } else if (event.track.kind === 'audio') {
+-            playRemoteAudioTrack(event.streams[0], targetSid);
+-            monitorAudio(event.streams[0], targetSid);
++            const aStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
++            playRemoteAudioTrack(aStream, targetSid);
++            monitorAudio(aStream, targetSid);
+         }
+     };
+ 
+@@ -1770,13 +1795,30 @@ socket.on('room_users_list', (users) => {
+     users.forEach(u => {
+         renderVoiceUser(u.sid, u.username, u.muted, u.avatar);
+         if (u.sid !== socket.id) {
+-            createPeerConnection(u.sid, true);
++            const isInitiator = socket.id > u.sid;
++            if (isInitiator) {
++                createPeerConnection(u.sid, true);
++            } else {
++                if (!peers[u.sid] || peers[u.sid].signalingState === 'closed') {
++                    createPeerConnection(u.sid, false);
++                }
++            }
+         }
+     });
+ });
+ 
+ socket.on('user_joined', (data) => {
+     renderVoiceUser(data.sid, data.username, data.muted, data.avatar);
++    if (data.sid !== socket.id) {
++        const isInitiator = socket.id > data.sid;
++        if (isInitiator) {
++            createPeerConnection(data.sid, true);
++        } else {
++            if (!peers[data.sid] || peers[data.sid].signalingState === 'closed') {
++                createPeerConnection(data.sid, false);
++            }
++        }
++    }
+ });
+ 
+ socket.on('user_left', (data) => {
+@@ -1808,7 +1850,10 @@ socket.on('user_mute_status', (data) => {
+ 
+ socket.on('webrtc_offer', async (data) => {
+     try {
+-        const pc = createPeerConnection(data.sender_sid, false);
++        let pc = peers[data.sender_sid];
++        if (!pc || pc.signalingState === 'closed') {
++            pc = createPeerConnection(data.sender_sid, false);
++        }
+         await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+         await flushPendingCandidates(data.sender_sid);
+         const answer = await pc.createAnswer();
+@@ -1826,7 +1871,7 @@ socket.on('webrtc_offer', async (data) => {
+ socket.on('webrtc_answer', async (data) => {
+     try {
+         const pc = peers[data.sender_sid];
+-        if (pc) {
++        if (pc && pc.signalingState !== 'closed') {
+             await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+             await flushPendingCandidates(data.sender_sid);
+         }
+@@ -2026,21 +2071,32 @@ if (userSearchInput && userSearchResults) {
+         }, 300);
+     });
+ 
++    userSearchInput.addEventListener('keydown', (e) => {
++        if (e.key === 'Enter') {
++            e.preventDefault();
++            clearTimeout(searchDebounceTimer);
++            const query = userSearchInput.value.trim();
++            if (query) searchUsers(query);
++        }
++    });
++
+     document.addEventListener('click', (e) => {
+-        if (!userSearchInput.contains(e.target) && !userSearchResults.contains(e.target)) {
++        if (userSearchInput && userSearchResults && !userSearchInput.contains(e.target) && !userSearchResults.contains(e.target)) {
+             userSearchResults.classList.add('hidden');
+         }
+     });
+ }
+ 
+ async function searchUsers(query) {
+-    if (!myUsername) return;
++    if (!myUsername || !userSearchResults) return;
+     try {
++        userSearchResults.classList.remove('hidden');
++        userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:var(--neon-cyan); text-align:center;">🔍 Aratılıyor...</div>';
++
+         const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}&username=${encodeURIComponent(myUsername)}`);
+         const data = await res.json();
+         userSearchResults.innerHTML = '';
+         if (data.success && data.results && data.results.length > 0) {
+-            userSearchResults.classList.remove('hidden');
+             data.results.forEach(u => {
+                 const div = document.createElement('div');
+                 div.className = 'search-result-item';
+@@ -2054,7 +2110,7 @@ async function searchUsers(query) {
+                 }
+ 
+                 div.innerHTML = `
+-                    <div style="display:flex; align-items:center; gap:8px;">
++                    <div style="display:flex; align-items:center; gap:8px; cursor:pointer;" onclick="event.stopPropagation(); window.openUserProfileModal('${u.username}')" title="Profili Görüntüle">
+                         <div class="user-avatar small ${u.avatarFrame || 'none'}">${renderAvatar(u.avatar, u.avatarFrame)}</div>
+                         <div style="display:flex; flex-direction:column;">
+                             <span style="font-size:0.85rem; font-weight:bold;">${u.displayName}</span>
+@@ -2066,7 +2122,7 @@ async function searchUsers(query) {
+ 
+                 div.addEventListener('click', () => {
+                     userSearchResults.classList.add('hidden');
+-                    userSearchInput.value = '';
++                    if (userSearchInput) userSearchInput.value = '';
+                     openPrivateChat({
+                         username: u.username,
+                         displayName: u.displayName,
+@@ -2080,10 +2136,14 @@ async function searchUsers(query) {
+                 userSearchResults.appendChild(div);
+             });
+         } else {
+-            userSearchResults.classList.remove('hidden');
+             userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#888; text-align:center;">Kullanıcı bulunamadı.</div>';
+         }
+-    } catch(e) { console.error(e); }
++    } catch(e) { 
++        console.error(e); 
++        if (userSearchResults) {
++            userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#ff3366; text-align:center;">Arama sırasında hata oluştu.</div>';
++        }
++    }
+ }
+ 
+ // --- ARKADAŞLIK İSTEĞİ FONKSİYONLARI ---
+@@ -2970,20 +3030,32 @@ function openMyOwnProfileInSidebar() {
+     `;
+ }
+ 
++function openMyProfileSettingsModal() {
++    if (profileDisplaynameInput) profileDisplaynameInput.value = myDisplayName;
++    if (profileCustomstatusInput) profileCustomstatusInput.value = myCustomStatus;
++    if (profileAboutInput) profileAboutInput.value = myAbout;
++    if (profileAvatarUrlInput) profileAvatarUrlInput.value = myAvatar.startsWith('http') ? myAvatar : '';
++    if (profileBannerUrlInput) profileBannerUrlInput.value = myProfileBanner.startsWith('http') ? myProfileBanner : '';
++    updateLiveProfilePreview();
++    if (profileModal) profileModal.classList.remove('hidden');
++}
++
+ if (openProfileBtn) {
+-    openProfileBtn.addEventListener('click', () => {
+-        profileDisplaynameInput.value = myDisplayName;
+-        if (profileCustomstatusInput) profileCustomstatusInput.value = myCustomStatus;
+-        profileAboutInput.value = myAbout;
+-        profileAvatarUrlInput.value = myAvatar.startsWith('http') ? myAvatar : '';
+-        profileBannerUrlInput.value = myProfileBanner.startsWith('http') ? myProfileBanner : '';
+-        updateLiveProfilePreview();
+-        profileModal.classList.remove('hidden');
+-    });
++    openProfileBtn.addEventListener('click', openMyProfileSettingsModal);
++}
++
++if (myProfileNameTrigger) {
++    myProfileNameTrigger.addEventListener('click', openMyProfileSettingsModal);
+ }
+ 
+ if (closeProfileBtn) closeProfileBtn.addEventListener('click', () => profileModal.classList.add('hidden'));
+ 
++if (profileModal) {
++    profileModal.addEventListener('click', (e) => {
++        if (e.target === profileModal) profileModal.classList.add('hidden');
++    });
++}
++
+ if (tabProfGen) tabProfGen.addEventListener('click', () => switchProfTab('gen'));
+ if (tabProfDecor) tabProfDecor.addEventListener('click', () => switchProfTab('decor'));
+ if (tabProfAdmin) tabProfAdmin.addEventListener('click', () => switchProfTab('admin'));
+@@ -3197,14 +3269,17 @@ let isDeafenedGlobal = false;
+ 
+ if (profileMicBtn) {
+     profileMicBtn.addEventListener('click', () => {
+-        isMicMutedGlobal = !isMicMutedGlobal;
+-        profileMicBtn.innerHTML = isMicMutedGlobal ? '🔇' : '🎙️';
+-        profileMicBtn.classList.toggle('mic-off', isMicMutedGlobal);
+-        profileMicBtn.classList.toggle('mic-on', !isMicMutedGlobal);
+-        
+-        if (currentRoom) {
+-            if (micToggleBtn) micToggleBtn.click();
+-            else socket.emit('mute_status', { muted: isMicMutedGlobal });
++        if (micToggleBtn && currentRoom) {
++            micToggleBtn.click();
++        } else {
++            isMicMutedGlobal = !isMicMutedGlobal;
++            profileMicBtn.innerHTML = isMicMutedGlobal ? '🔇' : '🎙️';
++            profileMicBtn.classList.toggle('mic-off', isMicMutedGlobal);
++            profileMicBtn.classList.toggle('mic-on', !isMicMutedGlobal);
++            if (localAudioStream) {
++                localAudioStream.getAudioTracks().forEach(t => t.enabled = !isMicMutedGlobal);
++            }
++            socket.emit('mute_status', { muted: isMicMutedGlobal });
+         }
+     });
+ }

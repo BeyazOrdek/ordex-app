@@ -2635,12 +2635,13 @@ img.user-avatar,
 
 /* Resize Handles (Discord Sürükleme Kenarlıkları) */
 .resizer-handle {
-    width: 5px;
+    width: 4px;
+    flex: 0 0 4px;
     height: 100%;
     background: transparent;
     cursor: col-resize;
     position: relative;
-    z-index: 100;
+    z-index: 10;
     transition: background 0.2s;
     user-select: none;
     touch-action: none;
@@ -2669,6 +2670,12 @@ img.user-avatar,
     padding: 0;
     margin: 0;
     border: none;
+}
+
+.modal-overlay.hidden {
+    display: none !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
 }
 
 /* Bütünleşik Medya Kontrol Paneli */
@@ -2746,7 +2753,7 @@ img.user-avatar,
     padding: 4px 8px;
     border-radius: 6px;
     white-space: nowrap;
-    pointer-events: none;
+    pointer-events: none !important;
     opacity: 0;
     transition: opacity 0.2s, transform 0.2s;
     box-shadow: 0 4px 12px rgba(0,0,0,0.6);
