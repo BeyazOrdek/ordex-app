@@ -16,7 +16,16 @@
   "friends": [],
   "friend_requests": [],
   "blocked_users": [],
-  "private_messages": [],
+  "private_messages": [
+    {
+      "id": "pm_1787772198755",
+      "sender": "TestUserA",
+      "receiver": "TestUserB",
+      "message": "Merhaba TestUserB!",
+      "timestamp": "2026-08-26T19:23:18.755Z",
+      "read": false
+    }
+  ],
   "groups": [],
   "group_members": [],
   "group_messages": [],

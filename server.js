@@ -768,15 +768,18 @@ app.get('/api/guilds/messages', (req, res) => {
 
 app.get('/api/pm/history', (req, res) => {
   const { user1, user2, requester } = req.query;
-  if (!user1 || !user2) return res.json({ success: false, history: [] });
+  if (!user1 || !user2) return res.json({ success: true, history: [] });
 
-  // Güvenlik Kontrolü: İstekte bulunan kullanıcı yalnızca kendisinin taraf olduğu sohbeti okuyabilir!
-  if (requester && requester !== user1 && requester !== user2) {
+  const u1 = user1.trim().toLowerCase();
+  const u2 = user2.trim().toLowerCase();
+  const reqUser = requester ? requester.trim().toLowerCase() : '';
+
+  if (reqUser && reqUser !== u1 && reqUser !== u2) {
     return res.status(403).json({ success: false, message: 'Bu sohbet geçmişini okuma yetkiniz yok!' });
   }
 
   const history = dbData.private_messages
-    .filter(m => (m.sender === user1 && m.receiver === user2) || (m.sender === user2 && m.receiver === user1))
+    .filter(m => (m.sender.toLowerCase() === u1 && m.receiver.toLowerCase() === u2) || (m.sender.toLowerCase() === u2 && m.receiver.toLowerCase() === u1))
     .map(r => ({ sender: r.sender, receiver: r.receiver, message: r.message, time: r.timestamp, read: r.read }));
     
   res.json({ success: true, history });
@@ -975,16 +978,15 @@ app.get('/api/users/blocked', (req, res) => {
 
     const cleanMsg = message.trim();
 
-    // Alıcı var mı kontrol et
-    const receiverUser = dbData.users.find(u => u.username === receiver);
-    if (!receiverUser) {
+    const receiverUserInDb = dbData.users.find(u => u.username.toLowerCase() === receiver.toLowerCase());
+    const isReceiverOnline = !!online_users[receiver];
+    if (!receiverUserInDb && !isReceiverOnline) {
       return socket.emit('error_message', { message: 'Mesaj gönderilecek kullanıcı bulunamadı!' });
     }
 
-    // Engellenmiş mi kontrol et
     const isBlocked = dbData.blocked_users.some(b => 
-      (b.blocker === sender && b.blocked === receiver) || 
-      (b.blocker === receiver && b.blocked === sender)
+      (b.blocker.toLowerCase() === sender.toLowerCase() && b.blocked.toLowerCase() === receiver.toLowerCase()) || 
+      (b.blocker.toLowerCase() === receiver.toLowerCase() && b.blocked.toLowerCase() === sender.toLowerCase())
     );
     if (isBlocked) {
       return socket.emit('error_message', { message: 'Bu kullanıcıya mesaj gönderemezsiniz.' });

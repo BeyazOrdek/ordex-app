@@ -2102,6 +2102,19 @@ if (userSearchInput && userSearchResults) {
     });
 }
 
+window.startPrivateChatFromSearch = function(username, displayName, avatar, avatarFrame, about, isOnline) {
+    if (userSearchResults) userSearchResults.classList.add('hidden');
+    if (userSearchInput) userSearchInput.value = '';
+    openPrivateChat({
+        username,
+        displayName: displayName || username,
+        avatar: avatar || '🎮',
+        avatarFrame: avatarFrame || 'none',
+        about: about || '',
+        isOnline: !!isOnline
+    });
+};
+
 async function searchUsers(query) {
     if (!myUsername || !userSearchResults) return;
     try {
@@ -2124,6 +2137,9 @@ async function searchUsers(query) {
                     btnHtml = `<button class="cyber-btn small" onclick="event.stopPropagation(); window.sendFriendRequest('${u.username}')">+ Ekle</button>`;
                 }
 
+                const safeDisplayName = (u.displayName || u.username).replace(/'/g, "\\'");
+                const safeAbout = (u.about || '').replace(/'/g, "\\'");
+
                 div.innerHTML = `
                     <div style="display:flex; align-items:center; gap:8px; cursor:pointer;" onclick="event.stopPropagation(); window.openUserProfileModal('${u.username}')" title="Profili Görüntüle">
                         <div class="user-avatar small ${u.avatarFrame || 'none'}">${renderAvatar(u.avatar, u.avatarFrame)}</div>
@@ -2132,7 +2148,10 @@ async function searchUsers(query) {
                             <span style="font-size:0.7rem; color:var(--text-muted);">@${u.username}</span>
                         </div>
                     </div>
-                    <div>${btnHtml}</div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <button class="cyber-btn small" title="Sohbet Başlat" onclick="event.stopPropagation(); window.startPrivateChatFromSearch('${u.username}', '${safeDisplayName}', '${u.avatar}', '${u.avatarFrame || 'none'}', '${safeAbout}', ${u.isOnline})">💬 DM</button>
+                        ${btnHtml}
+                    </div>
                 `;
 
                 div.addEventListener('click', () => {
@@ -2154,7 +2173,7 @@ async function searchUsers(query) {
             userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#888; text-align:center;">Kullanıcı bulunamadı.</div>';
         }
     } catch(e) { 
-        console.error(e); 
+        console.error('Kullanıcı arama hatası:', e); 
         if (userSearchResults) {
             userSearchResults.innerHTML = '<div style="padding:10px; font-size:0.8rem; color:#ff3366; text-align:center;">Arama sırasında hata oluştu.</div>';
         }
